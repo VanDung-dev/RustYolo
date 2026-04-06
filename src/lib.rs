@@ -7,6 +7,8 @@ use sysinfo::{System, CpuRefreshKind, RefreshKind};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use std::ffi::c_void;
+use std::os::raw::c_char;
 
 
 /// Struct quản lý monitoring hệ thống
@@ -84,6 +86,27 @@ impl PerformanceMonitor {
         // Xóa các frame cũ hơn 1 giây
         self.frame_times.retain(|&t| now - t < 1.0);
         self.fps = self.frame_times.len() as f64;
+    }
+
+    /// Nhận buffer pointer trực tiếp từ Python numpy (zero copy)
+    fn process_frame(&mut self, py: Python, ptr: usize, length: usize) -> PyResult<f64> {
+        let start = std::time::Instant::now();
+        
+        unsafe {
+            // Truy cập trực tiếp memory buffer từ OpenCV numpy array
+            let data_ptr = ptr as *const c_char;
+            
+            let mut sum: u64 = 0;
+            for i in 0..length {
+                sum += *data_ptr.add(i) as u64;
+            }
+            let avg = sum as f64 / length as f64;
+            
+            let latency = start.elapsed().as_secs_f64() * 1000.0;
+            self.update_frame_time(latency);
+            
+            Ok(avg)
+        }
     }
 
     /// Lấy tất cả stats dưới dạng Python dict

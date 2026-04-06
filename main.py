@@ -80,6 +80,11 @@ def run_camera_detection(
             # Vẽ kết quả lên frame
             annotated_frame = detector.annotate_frame(frame, results)
 
+            # Gửi buffer frame sang Rust xử lý zero-copy
+            frame_ptr = frame.__array_interface__['data'][0]
+            frame_len = frame.size
+            avg_brightness = monitor.process_frame(frame_ptr, frame_len)
+
             # Cập nhật thông số FPS/Latency - non blocking
             monitor.update_frame_time(detect_time)
 

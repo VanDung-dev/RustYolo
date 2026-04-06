@@ -8,9 +8,7 @@ edition = "2024"
 sysinfo = "0.32"
 
 # Arrow / Zero-Copy
-# Zero-copy Arrow (tạm bỏ pyarrow để build được)
 arrow = "58.0.0"
-# arrow-pyarrow = "58.0.0"
 
 # Python Integration (FFI)
 pyo3 = { version = "0.28.2", features = ["extension-module"] }
