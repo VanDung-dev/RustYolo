@@ -19,9 +19,9 @@ COCO_CLASSES = [
     "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
 ]
 
-def test_yolov8x():
-    print("Đang khởi tạo YOLOv8x detector...")
-    detector = YoloV8Detector("yolov8x.onnx", conf_threshold=0.25, iou_threshold=0.45)
+def test_yolov8n():
+    print("Đang khởi tạo YOLOv8n detector...")
+    detector = YoloV8Detector("yolov8n.onnx", conf_threshold=0.25, iou_threshold=0.45)
     
     input_size = detector.get_input_size()
     print(f"Input size: {input_size}")
@@ -35,7 +35,7 @@ def test_yolov8x():
     for det in detections:
         print(f"  {det}")
     
-    print("\nTest thành công! YOLOv8x hoạt động bình thường.")
+    print("\nTest thành công! YOLOv8n hoạt động bình thường.")
 
 if __name__ == "__main__":
-    test_yolov8x()
+    test_yolov8n()
