@@ -1,0 +1,26 @@
+[package]
+name = "rust_yolo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# System Monitoring
+sysinfo = "0.32"
+
+# Arrow / Zero-Copy
+# Zero-copy Arrow (tạm bỏ pyarrow để build được)
+arrow = "58.0.0"
+# arrow-pyarrow = "58.0.0"
+
+# Python Integration (FFI)
+pyo3 = { version = "0.28.2", features = ["extension-module"] }
+pythonize = "0.28.0"
+pyo3-async-runtimes = { version = "0.28.0", features = ["tokio-runtime"] }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+paste = "1.0"
+
+[lib]
+name = "rust_yolo"
+crate-type = ["cdylib"]
