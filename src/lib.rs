@@ -1,15 +1,16 @@
-//! Rust extension module cho macOS system monitoring
-//! Sử dụng PyO3 0.28 và sysinfo 0.32
+//! Rust extension module cho macOS system monitoring và YOLOv8x inference
+//! Sử dụng PyO3 0.28, sysinfo 0.32 và ONNX Runtime
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use sysinfo::{System, CpuRefreshKind, RefreshKind};
+use std::os::raw::c_char;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use std::ffi::c_void;
-use std::os::raw::c_char;
+use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
+mod yolo;
+pub use yolo::{YoloDetection, YoloV8Detector};
 
 /// Struct quản lý monitoring hệ thống
 #[pyclass]
@@ -23,14 +24,12 @@ struct PerformanceMonitor {
     frame_times: Vec<f64>,
 }
 
-
 #[pymethods]
 impl PerformanceMonitor {
     #[new]
     fn new() -> Self {
         let mut system = System::new_with_specifics(
-            RefreshKind::everything()
-                .with_cpu(CpuRefreshKind::everything())
+            RefreshKind::everything().with_cpu(CpuRefreshKind::everything()),
         );
         system.refresh_all();
 
@@ -89,22 +88,22 @@ impl PerformanceMonitor {
     }
 
     /// Nhận buffer pointer trực tiếp từ Python numpy (zero copy)
-    fn process_frame(&mut self, py: Python, ptr: usize, length: usize) -> PyResult<f64> {
+    fn process_frame(&mut self, _py: Python, ptr: usize, length: usize) -> PyResult<f64> {
         let start = std::time::Instant::now();
-        
+
         unsafe {
             // Truy cập trực tiếp memory buffer từ OpenCV numpy array
             let data_ptr = ptr as *const c_char;
-            
+
             let mut sum: u64 = 0;
             for i in 0..length {
                 sum += *data_ptr.add(i) as u64;
             }
             let avg = sum as f64 / length as f64;
-            
+
             let latency = start.elapsed().as_secs_f64() * 1000.0;
             self.update_frame_time(latency);
-            
+
             Ok(avg)
         }
     }
@@ -117,11 +116,15 @@ impl PerformanceMonitor {
 
         // Frame stats
         stats.set_item(pyo3::intern!(py, "fps"), self.fps).unwrap();
-        stats.set_item(pyo3::intern!(py, "latency"), self.latency).unwrap();
+        stats
+            .set_item(pyo3::intern!(py, "latency"), self.latency)
+            .unwrap();
 
         // CPU info
         let cpu_usage = sys.global_cpu_usage();
-        stats.set_item(pyo3::intern!(py, "cpu_usage"), cpu_usage).unwrap();
+        stats
+            .set_item(pyo3::intern!(py, "cpu_usage"), cpu_usage)
+            .unwrap();
         stats.set_item(pyo3::intern!(py, "cpu_temp"), 0.0).unwrap();
 
         // Memory info
@@ -130,34 +133,59 @@ impl PerformanceMonitor {
         let mem_percent = (mem_used / mem_total) * 100.0;
 
         let memory_usage = PyDict::new(py);
-        memory_usage.set_item(pyo3::intern!(py, "used"), format!("{:.1} GB", mem_used)).unwrap();
-        memory_usage.set_item(pyo3::intern!(py, "total"), format!("{:.1} GB", mem_total)).unwrap();
-        memory_usage.set_item(pyo3::intern!(py, "percent"), mem_percent).unwrap();
+        memory_usage
+            .set_item(pyo3::intern!(py, "used"), format!("{:.1} GB", mem_used))
+            .unwrap();
+        memory_usage
+            .set_item(pyo3::intern!(py, "total"), format!("{:.1} GB", mem_total))
+            .unwrap();
+        memory_usage
+            .set_item(pyo3::intern!(py, "percent"), mem_percent)
+            .unwrap();
 
-        stats.set_item(pyo3::intern!(py, "memory_usage"), memory_usage).unwrap();
+        stats
+            .set_item(pyo3::intern!(py, "memory_usage"), memory_usage)
+            .unwrap();
 
         // GPU info
         let gpu_info = PyDict::new(py);
-        gpu_info.set_item(pyo3::intern!(py, "available"), true).unwrap();
-        gpu_info.set_item(pyo3::intern!(py, "name"), "Apple Silicon GPU").unwrap();
-        gpu_info.set_item(pyo3::intern!(py, "load"), cpu_usage).unwrap();
-        gpu_info.set_item(pyo3::intern!(py, "power"), "~3-5W").unwrap();
-        gpu_info.set_item(pyo3::intern!(py, "temperature"), "N/A").unwrap();
-        gpu_info.set_item(pyo3::intern!(py, "memory_used"), "N/A").unwrap();
-        gpu_info.set_item(pyo3::intern!(py, "memory_total"), "N/A").unwrap();
+        gpu_info
+            .set_item(pyo3::intern!(py, "available"), true)
+            .unwrap();
+        gpu_info
+            .set_item(pyo3::intern!(py, "name"), "Apple Silicon GPU")
+            .unwrap();
+        gpu_info
+            .set_item(pyo3::intern!(py, "load"), cpu_usage)
+            .unwrap();
+        gpu_info
+            .set_item(pyo3::intern!(py, "power"), "~3-5W")
+            .unwrap();
+        gpu_info
+            .set_item(pyo3::intern!(py, "temperature"), "N/A")
+            .unwrap();
+        gpu_info
+            .set_item(pyo3::intern!(py, "memory_used"), "N/A")
+            .unwrap();
+        gpu_info
+            .set_item(pyo3::intern!(py, "memory_total"), "N/A")
+            .unwrap();
 
-        stats.set_item(pyo3::intern!(py, "gpu_info"), gpu_info).unwrap();
+        stats
+            .set_item(pyo3::intern!(py, "gpu_info"), gpu_info)
+            .unwrap();
 
         stats.into()
     }
 }
-
 
 /// Module initialization
 #[pymodule]
 #[allow(unused_variables)]
 fn rust_yolo(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PerformanceMonitor>()?;
+    m.add_class::<YoloV8Detector>()?;
+    m.add_class::<YoloDetection>()?;
 
     Ok(())
 }
