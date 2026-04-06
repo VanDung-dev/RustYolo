@@ -2,11 +2,14 @@
 //!
 
 use ndarray::Array4;
-use ort::execution_providers::CoreMLExecutionProvider;
+use ort::execution_providers::{CoreML, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use arrow::pyarrow::PyArrowType;
+use arrow::array::ArrayData;
+use arrow::array::Float32Array;
 
 #[pyclass]
 pub struct YoloDetection {
@@ -73,6 +76,10 @@ impl YoloV8Detector {
     #[new]
     #[pyo3(signature = (model_path, conf_threshold=0.25, iou_threshold=0.45))]
     fn new(model_path: &str, conf_threshold: f32, iou_threshold: f32) -> PyResult<Self> {
+        if !CoreML::default().is_available().unwrap_or(false) {
+            println!("⚠️ CẢNH BÁO: CoreML không khả dụng trên thiết bị này. Đang lùi về CPU.");
+        }
+
         let session = Session::builder()
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -80,7 +87,7 @@ impl YoloV8Detector {
                     e
                 ))
             })?
-            .with_execution_providers([CoreMLExecutionProvider::default().build()])
+            .with_execution_providers([CoreML::default().build()])
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to enable CoreML: {}",
@@ -111,11 +118,35 @@ impl YoloV8Detector {
         })
     }
 
+    fn detect_from_arrow(
+        &mut self,
+        py: Python,
+        arrow_array: PyArrowType<ArrayData>,
+    ) -> PyResult<Py<PyList>> {
+        // Zero-copy access to the Arrow ArrayData
+        let array_data = arrow_array.0;
+        
+        let float_array = Float32Array::from(array_data);
+        let data = float_array.values();
+        
+        // Tạo ndarray view từ Arrow buffer (Zero-copy)
+        let input_array = ndarray::ArrayView4::from_shape(
+            (1, 3, self.input_height, self.input_width),
+            data
+        ).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid array shape: {}", e))
+        })?;
+
+        let input_owned = input_array.to_owned();
+        self.run_inference(py, input_owned, (self.input_width, self.input_height))
+    }
+
     fn detect_from_numpy(
         &mut self,
         py: Python,
         numpy_array: &Bound<pyo3::PyAny>,
     ) -> PyResult<Py<PyList>> {
+        // ... giữ lại để tương thích nhưng khuyên dùng Arrow ...
         let shape_obj = numpy_array.getattr("shape")?;
         let shape: (usize, usize, usize) = shape_obj.extract()?;
         let (height, width, _channels) = shape;
@@ -125,16 +156,17 @@ impl YoloV8Detector {
             .getattr("data")?
             .extract::<usize>()?;
 
-        let img = image::DynamicImage::ImageRgb8(
-            image::ImageBuffer::from_raw(width as u32, height as u32, unsafe {
-                std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3).to_vec()
-            })
-            .ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>("Failed to create image buffer")
-            })?,
-        );
+        // Zero-copy mapping numpy -> ndarray
+        let raw_data = unsafe { 
+            std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) 
+        };
+        
+        let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
+            let offset = (y as usize * width + x as usize) * 3 + c;
+            raw_data[offset] as f32 / 255.0
+        });
 
-        self.detect_image(py, img)
+        self.run_inference(py, input_array, (width, height))
     }
 
     fn detect_image_bytes(
@@ -185,10 +217,11 @@ impl YoloV8Detector {
         let rgb = resized.to_rgb8();
         let (img_width, img_height) = (img.width(), img.height());
 
-        // Optimize: Sử dụng from_shape_fn để tạo array nhanh hơn (vectorized-like)
+        // Optimize v2: Sử dụng raw samples để tránh overhead của get_pixel()
+        let rgb_raw = rgb.as_raw();
         let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
-            let pixel = rgb.get_pixel(x as u32, y as u32);
-            pixel[c] as f32 / 255.0
+            let offset = (y as usize * self.input_width + x as usize) * 3 + c;
+            rgb_raw[offset] as f32 / 255.0
         });
 
         let input_tensor = Value::from_array(input_array).map_err(|e| {
@@ -293,6 +326,107 @@ impl YoloV8Detector {
                         y,
                         width: w,
                         height: h,
+                    });
+                }
+            }
+        }
+
+        let py_list = PyList::empty(py);
+        for det in detections {
+            let py_det = Py::new(py, det)?;
+            py_list.append(py_det)?;
+        }
+
+        Ok(py_list.into())
+    }
+
+    fn run_inference(
+        &mut self,
+        py: Python,
+        input_array: Array4<f32>,
+        orig_dim: (usize, usize)
+    ) -> PyResult<Py<PyList>> {
+        let input_tensor = Value::from_array(input_array).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Failed to create input tensor: {}",
+                e
+            ))
+        })?;
+
+        let outputs = self.session.run(ort::inputs![input_tensor]).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Inference failed: {}", e))
+        })?;
+
+        let (_out_shape, out_data) =
+            outputs["output0"]
+                .try_extract_tensor::<f32>()
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                        "Failed to extract output: {}",
+                        e
+                    ))
+                })?;
+
+        let out_data: Vec<f32> = out_data.to_vec();
+        drop(outputs);
+
+        let num_anchors = 8400; // Standard for 640x640 YOLOv8
+        let scale_x = orig_dim.0 as f32 / self.input_width as f32;
+        let scale_y = orig_dim.1 as f32 / self.input_height as f32;
+
+        let mut detections = Vec::new();
+        let mut boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> =
+            vec![Vec::new(); self.num_classes];
+
+        for i in 0..num_anchors {
+            let mut max_conf = 0.0f32;
+            let mut max_class = 0usize;
+
+            for c in 0..self.num_classes {
+                let raw_score = out_data[(4 + c) * num_anchors + i];
+                let conf = raw_score; 
+                if conf > max_conf {
+                    max_conf = conf;
+                    max_class = c;
+                }
+            }
+
+            if max_conf > self.conf_threshold {
+                let cx = out_data[i];
+                let cy = out_data[num_anchors + i];
+                let w = out_data[2 * num_anchors + i];
+                let h = out_data[3 * num_anchors + i];
+
+                let x = (cx - w / 2.0) * scale_x;
+                let y = (cy - h / 2.0) * scale_y;
+                let width = w * scale_x;
+                let height = h * scale_y;
+
+                boxes_by_class[max_class].push((x, y, width, height, max_conf));
+            }
+        }
+
+        for (class_id, boxes) in boxes_by_class.iter().enumerate() {
+            if boxes.is_empty() { continue; }
+            let mut nms_boxes = boxes.clone();
+            nms_boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
+            let mut keep = vec![true; nms_boxes.len()];
+
+            for i in 0..nms_boxes.len() {
+                if !keep[i] { continue; }
+                for j in (i + 1)..nms_boxes.len() {
+                    if !keep[j] { continue; }
+                    let iou = self.compute_iou(&nms_boxes[i], &nms_boxes[j]);
+                    if iou > self.iou_threshold { keep[j] = false; }
+                }
+            }
+
+            for (idx, &(x, y, w, h, conf)) in nms_boxes.iter().enumerate() {
+                if keep[idx] {
+                    detections.push(YoloDetection {
+                        class_id: class_id as i32,
+                        confidence: conf,
+                        x, y, width: w, height: h,
                     });
                 }
             }
