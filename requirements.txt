@@ -1,0 +1,19 @@
+# YOLOv8 và dependencies cho object detection
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+torch>=2.0.0
+torchvision>=0.15.0
+Pillow>=10.0.0
+PyYAML>=6.0
+scipy>=1.10.0
+tqdm>=4.65.0
+requests>=2.31.0
+matplotlib>=3.7.0
+pandas>=2.0.0
+seaborn>=0.12.0
+psutil>=5.9.0
+
+# macOS specific dependencies cho GPU monitoring
+pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'
+pyobjc-framework-IOKit>=10.0; sys_platform == 'darwin'
