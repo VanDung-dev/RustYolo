@@ -78,6 +78,8 @@ impl YoloV8Detector {
     fn new(model_path: &str, conf_threshold: f32, iou_threshold: f32) -> PyResult<Self> {
         if !CoreML::default().is_available().unwrap_or(false) {
             println!("⚠️ CẢNH BÁO: CoreML không khả dụng trên thiết bị này. Đang lùi về CPU.");
+        } else {
+            println!("🚀 CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng...");
         }
 
         let session = Session::builder()
@@ -87,7 +89,9 @@ impl YoloV8Detector {
                     e
                 ))
             })?
-            .with_execution_providers([CoreML::default().build()])
+            .with_execution_providers([
+                CoreML::default().build()
+            ])
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to enable CoreML: {}",
