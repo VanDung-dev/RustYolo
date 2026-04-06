@@ -78,7 +78,6 @@ impl PerformanceMonitor {
 
         self.frame_times.push(now);
 
-        // Xóa các frame cũ hơn 1 giây
         self.frame_times.retain(|&t| now - t < 1.0);
         self.fps = self.frame_times.len() as f64;
     }
@@ -88,7 +87,6 @@ impl PerformanceMonitor {
         let start = std::time::Instant::now();
 
         unsafe {
-            // Truy cập trực tiếp memory buffer từ OpenCV numpy array
             let data_ptr = ptr as *const u8;
 
             let mut sum: u64 = 0;

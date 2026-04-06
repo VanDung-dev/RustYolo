@@ -118,16 +118,11 @@ impl YoloV8Detector {
                 ))
             })?;
 
-        let mut input_width = 640;
-        let mut input_height = 640;
+        let input_width = 640;
+        let input_height = 640;
         
-        // Try to dynamically extract input shape from ONNX metadata if available
-        if let Some(input) = session.inputs().get(0) {
-            // Note: Not strictly parsing ort type here to avoid version mismatches, 
-            // relying on standard 640 default. We will let Python override if needed.
-        }
-
-        // We will detect num_classes and num_anchors dynamically from the tensor output
+        if let Some(_input) = session.inputs().get(0) {}
+        
         let num_classes = 80;
 
 
@@ -146,13 +141,11 @@ impl YoloV8Detector {
         py: Python,
         arrow_array: PyArrowType<ArrayData>,
     ) -> PyResult<Py<PyList>> {
-        // Zero-copy access to the Arrow ArrayData
         let array_data = arrow_array.0;
         
         let float_array = Float32Array::from(array_data);
         let data = float_array.values();
         
-        // Tạo ndarray view từ Arrow buffer (Zero-copy)
         let input_array = ndarray::ArrayView4::from_shape(
             (1, 3, self.input_height, self.input_width),
             data
@@ -160,8 +153,6 @@ impl YoloV8Detector {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid array shape: {}", e))
         })?;
 
-        // NOTE: to_owned is still used here for compatibility with run_inference input.
-        // In the next step, we'll optimize this further for truly zero-copy if possible.
         let input_owned = input_array.to_owned();
         self.run_inference(py, input_owned, (self.input_width, self.input_height))
     }
@@ -182,8 +173,7 @@ impl YoloV8Detector {
                 data.len()
             )));
         }
-
-        // Tối ưu hóa: Chuẩn hóa / 255.0 song song bằng Rayon (SIMD-ready)
+        
         let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
             let offset = (y as usize * width + x as usize) * 3 + c;
             data[offset] as f32 / 255.0
@@ -197,7 +187,6 @@ impl YoloV8Detector {
         py: Python,
         numpy_array: &Bound<pyo3::PyAny>,
     ) -> PyResult<Py<PyList>> {
-        // ... giữ lại để tương thích nhưng khuyên dùng Arrow ...
         let shape_obj = numpy_array.getattr("shape")?;
         let shape: (usize, usize, usize) = shape_obj.extract()?;
         let (height, width, _channels) = shape;
@@ -206,8 +195,7 @@ impl YoloV8Detector {
             .getattr("ctypes")?
             .getattr("data")?
             .extract::<usize>()?;
-
-        // Zero-copy mapping numpy -> ndarray
+        
         let raw_data = unsafe { 
             std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) 
         };
@@ -267,8 +255,7 @@ impl YoloV8Detector {
 
         let rgb = resized.to_rgb8();
         let (img_width, img_height) = (img.width(), img.height());
-
-        // Optimize v2: Sử dụng raw samples để tránh overhead của get_pixel()
+        
         let rgb_raw = rgb.as_raw();
         let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
             let offset = (y as usize * self.input_width + x as usize) * 3 + c;
@@ -299,7 +286,6 @@ impl YoloV8Detector {
         let out_shape = outputs["output0"].try_extract_tensor::<f32>()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to extract: {}", e)))?.0;
         
-        // Dynamic detection of num_classes and num_anchors from ONNX output shape [1, 84, 8400]
         let num_classes = (out_shape[1] - 4) as usize;
         let num_anchors = out_shape[2] as usize;
         self.num_classes = num_classes; // Update self for future matching
@@ -319,7 +305,6 @@ impl YoloV8Detector {
 
             for c in 0..num_classes {
                 let raw_score = out_data[(4 + c) * num_anchors + i];
-                // YOLOv8 uses sigmoid optionally, but mostly onnx outputs are already final class confs
                 let conf = raw_score; 
                 
                 if conf > max_conf {
@@ -342,8 +327,7 @@ impl YoloV8Detector {
                 boxes_by_class[max_class].push((x, y, width, height, max_conf));
             }
         }
-
-        // TỐI ƯU HÓA SONG SONG: Rayon NMS
+        
         let detections: Vec<YoloDetection> = boxes_by_class
             .into_par_iter()
             .enumerate()
@@ -454,8 +438,7 @@ impl YoloV8Detector {
                 boxes_by_class[max_class].push((x, y, width, height, max_conf));
             }
         }
-
-        // TỐI ƯU HÓA SONG SONG: Xử lý NMS cho tất cả các class cùng lúc dùng Rayon
+        
         let detections: Vec<YoloDetection> = boxes_by_class
             .into_par_iter()
             .enumerate()
