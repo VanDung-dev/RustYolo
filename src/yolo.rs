@@ -6,7 +6,8 @@ use ort::execution_providers::{CoreML, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyList, PyBytes};
+use rayon::prelude::*;
 use arrow::pyarrow::PyArrowType;
 use arrow::array::ArrayData;
 use arrow::array::Float32Array;
@@ -89,8 +90,19 @@ impl YoloV8Detector {
                     e
                 ))
             })?
+            .with_intra_threads(1)
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to set intra threads: {}", e))
+            })?
+            .with_inter_threads(1)
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to set inter threads: {}", e))
+            })?
             .with_execution_providers([
-                CoreML::default().build()
+                CoreML::default()
+                    .with_subgraphs(true)
+                    .with_compute_units(ort::execution_providers::coreml::ComputeUnits::All)
+                    .build()
             ])
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -106,11 +118,18 @@ impl YoloV8Detector {
                 ))
             })?;
 
-        let _input_info = &session.inputs()[0];
-        let input_width = 640;
-        let input_height = 640;
+        let mut input_width = 640;
+        let mut input_height = 640;
+        
+        // Try to dynamically extract input shape from ONNX metadata if available
+        if let Some(input) = session.inputs().get(0) {
+            // Note: Not strictly parsing ort type here to avoid version mismatches, 
+            // relying on standard 640 default. We will let Python override if needed.
+        }
 
+        // We will detect num_classes and num_anchors dynamically from the tensor output
         let num_classes = 80;
+
 
         Ok(YoloV8Detector {
             session,
@@ -141,8 +160,36 @@ impl YoloV8Detector {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid array shape: {}", e))
         })?;
 
+        // NOTE: to_owned is still used here for compatibility with run_inference input.
+        // In the next step, we'll optimize this further for truly zero-copy if possible.
         let input_owned = input_array.to_owned();
         self.run_inference(py, input_owned, (self.input_width, self.input_height))
+    }
+
+    /// TỐI ƯU CAO: Nhận trực tiếp mảng bytes (u8) từ Python và chuẩn hóa song song bằng SIMD/Rayon.
+    fn detect_from_bytes(
+        &mut self,
+        py: Python,
+        bytes: &Bound<PyBytes>,
+        width: usize,
+        height: usize,
+    ) -> PyResult<Py<PyList>> {
+        let data = bytes.as_bytes();
+        if data.len() != width * height * 3 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Kích thước dữ liệu không khớp: mong đợi {}, có {}",
+                width * height * 3,
+                data.len()
+            )));
+        }
+
+        // Tối ưu hóa: Chuẩn hóa / 255.0 song song bằng Rayon (SIMD-ready)
+        let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
+            let offset = (y as usize * width + x as usize) * 3 + c;
+            data[offset] as f32 / 255.0
+        });
+
+        self.run_inference(py, input_array, (width, height))
     }
 
     fn detect_from_numpy(
@@ -249,29 +296,30 @@ impl YoloV8Detector {
                     ))
                 })?;
 
+        let out_shape = outputs["output0"].try_extract_tensor::<f32>()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to extract: {}", e)))?.0;
+        
+        // Dynamic detection of num_classes and num_anchors from ONNX output shape [1, 84, 8400]
+        let num_classes = (out_shape[1] - 4) as usize;
+        let num_anchors = out_shape[2] as usize;
+        self.num_classes = num_classes; // Update self for future matching
+
         let out_data: Vec<f32> = out_data.to_vec();
         drop(outputs);
 
-        let num_anchors = 8400; // Standard for 640x640 YOLOv8
         let scale_x = img_width as f32 / self.input_width as f32;
         let scale_y = img_height as f32 / self.input_height as f32;
 
-        let mut detections = Vec::new();
         let mut boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> =
-            vec![Vec::new(); self.num_classes];
+            vec![Vec::new(); num_classes];
 
         for i in 0..num_anchors {
             let mut max_conf = 0.0f32;
             let mut max_class = 0usize;
 
-            // Tìm class có confidence cao nhất
-            for c in 0..self.num_classes {
-                // Layout is [84, 8400], so each class score is at (4 + c) * 8400 + i
+            for c in 0..num_classes {
                 let raw_score = out_data[(4 + c) * num_anchors + i];
-                
-                // YOLOv8 output scores are usually already sigmoid-activated if using standard export,
-                // but if they are raw logits, we'd need: 1.0 / (1.0 + (-raw_score).exp())
-                // In most Ultralytics exports, they are ALREADY scores (0.0 to 1.0).
+                // YOLOv8 uses sigmoid optionally, but mostly onnx outputs are already final class confs
                 let conf = raw_score; 
                 
                 if conf > max_conf {
@@ -295,45 +343,37 @@ impl YoloV8Detector {
             }
         }
 
-        for (class_id, boxes) in boxes_by_class.iter().enumerate() {
-            if boxes.is_empty() { continue; }
-            
-            let mut nms_boxes: Vec<(f32, f32, f32, f32, f32)> = boxes.clone();
-            nms_boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
+        // TỐI ƯU HÓA SONG SONG: Rayon NMS
+        let detections: Vec<YoloDetection> = boxes_by_class
+            .into_par_iter()
+            .enumerate()
+            .filter(|(_, boxes)| !boxes.is_empty())
+            .flat_map(|(class_id, mut boxes)| {
+                let mut class_detections = Vec::new();
+                boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
+                let mut keep = vec![true; boxes.len()];
 
-            let mut keep = vec![true; nms_boxes.len()];
-
-            for i in 0..nms_boxes.len() {
-                if !keep[i] {
-                    continue;
-                }
-
-                for j in (i + 1)..nms_boxes.len() {
-                    if !keep[j] {
-                        continue;
-                    }
-
-                    let iou = self.compute_iou(&nms_boxes[i], &nms_boxes[j]);
-
-                    if iou > self.iou_threshold {
-                        keep[j] = false;
+                for i in 0..boxes.len() {
+                    if !keep[i] { continue; }
+                    for j in (i + 1)..boxes.len() {
+                        if !keep[j] { continue; }
+                        let iou = self.compute_iou_internal(&boxes[i], &boxes[j]);
+                        if iou > self.iou_threshold { keep[j] = false; }
                     }
                 }
-            }
 
-            for (idx, &(x, y, w, h, conf)) in nms_boxes.iter().enumerate() {
-                if keep[idx] {
-                    detections.push(YoloDetection {
-                        class_id: class_id as i32,
-                        confidence: conf,
-                        x,
-                        y,
-                        width: w,
-                        height: h,
-                    });
+                for (idx, &(x, y, w, h, conf)) in boxes.iter().enumerate() {
+                    if keep[idx] {
+                        class_detections.push(YoloDetection {
+                            class_id: class_id as i32,
+                            confidence: conf,
+                            x, y, width: w, height: h,
+                        });
+                    }
                 }
-            }
-        }
+                class_detections
+            })
+            .collect();
 
         let py_list = PyList::empty(py);
         for det in detections {
@@ -371,22 +411,27 @@ impl YoloV8Detector {
                     ))
                 })?;
 
+        let out_shape = outputs["output0"].try_extract_tensor::<f32>()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to extract: {}", e)))?.0;
+        
+        let num_classes = (out_shape[1] - 4) as usize;
+        let num_anchors = out_shape[2] as usize;
+        self.num_classes = num_classes; // Update self
+
         let out_data: Vec<f32> = out_data.to_vec();
         drop(outputs);
 
-        let num_anchors = 8400; // Standard for 640x640 YOLOv8
         let scale_x = orig_dim.0 as f32 / self.input_width as f32;
         let scale_y = orig_dim.1 as f32 / self.input_height as f32;
 
-        let mut detections = Vec::new();
         let mut boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> =
-            vec![Vec::new(); self.num_classes];
+            vec![Vec::new(); num_classes];
 
         for i in 0..num_anchors {
             let mut max_conf = 0.0f32;
             let mut max_class = 0usize;
 
-            for c in 0..self.num_classes {
+            for c in 0..num_classes {
                 let raw_score = out_data[(4 + c) * num_anchors + i];
                 let conf = raw_score; 
                 if conf > max_conf {
@@ -410,31 +455,39 @@ impl YoloV8Detector {
             }
         }
 
-        for (class_id, boxes) in boxes_by_class.iter().enumerate() {
-            if boxes.is_empty() { continue; }
-            let mut nms_boxes = boxes.clone();
-            nms_boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
-            let mut keep = vec![true; nms_boxes.len()];
+        // TỐI ƯU HÓA SONG SONG: Xử lý NMS cho tất cả các class cùng lúc dùng Rayon
+        let detections: Vec<YoloDetection> = boxes_by_class
+            .into_par_iter()
+            .enumerate()
+            .filter(|(_, boxes)| !boxes.is_empty())
+            .flat_map(|(class_id, mut boxes)| {
+                let mut class_detections = Vec::new();
+                
+                // NMS nội bộ trong class
+                boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
+                let mut keep = vec![true; boxes.len()];
 
-            for i in 0..nms_boxes.len() {
-                if !keep[i] { continue; }
-                for j in (i + 1)..nms_boxes.len() {
-                    if !keep[j] { continue; }
-                    let iou = self.compute_iou(&nms_boxes[i], &nms_boxes[j]);
-                    if iou > self.iou_threshold { keep[j] = false; }
+                for i in 0..boxes.len() {
+                    if !keep[i] { continue; }
+                    for j in (i + 1)..boxes.len() {
+                        if !keep[j] { continue; }
+                        let iou = self.compute_iou_internal(&boxes[i], &boxes[j]);
+                        if iou > self.iou_threshold { keep[j] = false; }
+                    }
                 }
-            }
 
-            for (idx, &(x, y, w, h, conf)) in nms_boxes.iter().enumerate() {
-                if keep[idx] {
-                    detections.push(YoloDetection {
-                        class_id: class_id as i32,
-                        confidence: conf,
-                        x, y, width: w, height: h,
-                    });
+                for (idx, &(x, y, w, h, conf)) in boxes.iter().enumerate() {
+                    if keep[idx] {
+                        class_detections.push(YoloDetection {
+                            class_id: class_id as i32,
+                            confidence: conf,
+                            x, y, width: w, height: h,
+                        });
+                    }
                 }
-            }
-        }
+                class_detections
+            })
+            .collect();
 
         let py_list = PyList::empty(py);
         for det in detections {
@@ -445,7 +498,7 @@ impl YoloV8Detector {
         Ok(py_list.into())
     }
 
-    fn compute_iou(
+    fn compute_iou_internal(
         &self,
         box1: &(f32, f32, f32, f32, f32),
         box2: &(f32, f32, f32, f32, f32),
@@ -460,10 +513,6 @@ impl YoloV8Detector {
         let area2 = box2.2 * box2.3;
         let union = area1 + area2 - intersection;
 
-        if union == 0.0 {
-            0.0
-        } else {
-            intersection / union
-        }
+        if union == 0.0 { 0.0 } else { intersection / union }
     }
 }

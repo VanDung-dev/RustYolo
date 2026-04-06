@@ -21,9 +21,10 @@ pyo3 = { version = "0.28.2", features = ["extension-module"] }
 
 
 # ONNX Runtime
-ort = { version = "2.0.0-rc.6", features = ["coreml"] }
+ort = { version = "2.0.0-rc.12", features = ["coreml"] }
 ndarray = "0.17"
 image = "0.25"
+rayon = "1.10"
 
 [lib]
 name = "rust_yolo"

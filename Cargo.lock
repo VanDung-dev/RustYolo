@@ -1638,6 +1638,7 @@ dependencies = [
  "ndarray",
  "ort",
  "pyo3",
+ "rayon",
  "sysinfo",
 ]
 
