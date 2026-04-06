@@ -1,6 +1,7 @@
 import cv2
 import time
 import threading
+import queue
 import pyarrow as pa
 from rust_yolo import YoloV8Detector, PerformanceMonitor
 
@@ -22,6 +23,12 @@ class VideoStream:
     """Threaded video capture stream to handle I/O without blocking"""
     def __init__(self, src=0):
         self.stream = cv2.VideoCapture(src)
+        
+        # Yêu cầu Camera chạy ở 1080p và 60 FPS (nếu phần cứng hỗ trợ)
+        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+        self.stream.set(cv2.CAP_PROP_FPS, 60)
+        
         (self.grabbed, self.frame) = self.stream.read()
         self.stopped = False
         self.lock = threading.Lock()
@@ -60,12 +67,46 @@ def find_camera_src():
                 return i
     return None
 
+# Hàng đợi để truyền dữ liệu giữa các luồng
+frame_queue = queue.Queue(maxsize=1)
+result_queue = queue.Queue(maxsize=1)
+stop_event = threading.Event()
+
+def ai_worker(detector, input_w, input_h):
+    """Luồng chuyên biệt để chạy suy luận AI"""
+    print("🤖 AI Worker Thread đã sẵn sàng.")
+    while not stop_event.is_set():
+        try:
+            # Lấy ảnh mới nhất ra để xử lý
+            frame_bytes = frame_queue.get(timeout=0.1)
+            if frame_bytes is None: continue
+            
+            inf_start = time.time()
+            detections = detector.detect_from_bytes(frame_bytes, input_w, input_h)
+            inf_time = (time.time() - inf_start) * 1000
+            
+            # Gửi kết quả về kèm thời gian xử lý
+            if result_queue.full():
+                try: result_queue.get_nowait() # Xóa kết quả cũ nếu chưa ai lấy
+                except queue.Empty: pass
+            result_queue.put((detections, inf_time))
+            
+            frame_queue.task_done()
+        except queue.Empty:
+            continue
+        except Exception as e:
+            print(f"❌ Lỗi trong AI Worker: {e}")
+
 def run_autonomous_scanner():
-    print("🚀 Khởi tạo hệ thống YOLOv8 Autonomous Scanner (Async Multi-Threaded)...")
+    print("🚀 Khởi tạo hệ thống YOLOv8 Autonomous Scanner (Kiến trúc PIPELINE)...")
+    
+    # Kích thước input của mô hình
+    input_w, input_h = 640, 640
     
     # Khởi tạo modules từ Rust (Release mode khuyên dùng)
     try:
-        detector = YoloV8Detector("yolov8s.onnx", conf_threshold=0.25, iou_threshold=0.45)
+        # Sử dụng bản X-Large tối ưu
+        detector = YoloV8Detector("yolov8x.onnx", conf_threshold=0.25, iou_threshold=0.45)
         monitor = PerformanceMonitor()
     except Exception as e:
         print(f"❌ Lỗi khởi tạo modules: {e}")
@@ -76,12 +117,17 @@ def run_autonomous_scanner():
         print("❌ Không tìm thấy camera khả dụng nào!")
         return
 
-    # Khởi động stream ngầm
+    # Khởi động AI Worker Thread
+    worker = threading.Thread(target=ai_worker, args=(detector, input_w, input_h), daemon=True)
+    worker.start()
+
+    # Khởi động stream capture
     stream = VideoStream(src).start()
-    print("📸 Đang bắt đầu quét... Nhấn 'q' để thoát.")
+    time.sleep(1.0) # Đợi camera ổn định
+    print("📸 Đang quét (Gối đầu)... Nhấn 'q' để thoát.")
     
-    # Kích thước input của mô hình
-    input_w, input_h = 640, 640
+    current_detections = []
+    current_inf_time = 0.0
 
     try:
         while True:
@@ -91,34 +137,42 @@ def run_autonomous_scanner():
             if not ret or frame is None:
                 continue
 
-            # 1. Tối ưu khâu Resize bằng OpenCV
+            # 1. Pipeline Stage 1: Pre-processing (Khinh công)
             frame_resized = cv2.resize(frame, (input_w, input_h))
             frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-            
-            # 2. Chuẩn bị dữ liệu CHW và Normalize (Float32)
-            frame_norm = frame_rgb.transpose(2, 0, 1).astype('float32') / 255.0
-            
-            # 3. Tối ưu: Tạo PyArrow Array trực tiếp từ NumPy (Zero-copy)
-            inf_start = time.time()
-            arrow_array = pa.array(frame_norm.reshape(-1), type=pa.float32())
+            frame_bytes = frame_rgb.tobytes()
 
-            # 4. Gọi Rust Inference qua Arrow
-            detections = detector.detect_from_arrow(arrow_array)
-            inf_time = (time.time() - inf_start) * 1000
-            
-            # Tính FPS
+            # Gửi ảnh vào hàng đợi AI nếu hàng đợi đang trống
+            if frame_queue.empty():
+                frame_queue.put(frame_bytes)
+
+            # 2. Pipeline Stage 2: Cập nhật kết quả AI (nếu đã xử lý xong)
+            try:
+                # Không block luồng hiển thị
+                new_results = result_queue.get_nowait()
+                current_detections, current_inf_time = new_results
+            except queue.Empty:
+                pass
+
+            # 3. Pipeline Stage 3: Hiển thị mượt mà
+            # Tính FPS của vòng lặp UI (Camera render)
             loop_time = time.time() - loop_start
-            current_fps = 1.0 / loop_time if loop_time > 0 else 0
+            display_fps = 1.0 / loop_time if loop_time > 0 else 0
+            
+            # Tính FPS thực tế của Engine AI (Rust)
+            ai_fps = 1000.0 / current_inf_time if current_inf_time > 0 else 0
             
             # Hiển thị monitor stats
             stats = monitor.get_stats()
-            mem_percent = stats['memory_usage']['percent']
-            info_text = f"FPS: {current_fps:.1f} | Inf: {inf_time:.1f}ms | CPU: {stats['cpu_usage']:.1f}%"
-            cv2.putText(frame, info_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            info_text = f"UI FPS: {display_fps:.1f} | AI FPS: {ai_fps:.1f} ({current_inf_time:.1f}ms)"
+            cpu_text = f"CPU: {stats['cpu_usage']:.1f}%"
+            
+            cv2.putText(frame, info_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, cpu_text, (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-            # Vẽ overlay lên frame (chỉ để xem)
-            for det in detections:
-                h, w = frame.shape[:2]
+            # Vẽ overlay Bounding Boxes (kết quả gần nhất)
+            h, w = frame.shape[:2]
+            for det in current_detections:
                 x1 = int(det.x * w / input_w)
                 y1 = int(det.y * h / input_h)
                 x2 = int((det.x + det.width) * w / input_w)
@@ -128,7 +182,7 @@ def run_autonomous_scanner():
                 label = f"{COCO_CLASSES[det.class_id]}: {det.confidence:.2f}"
                 cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-            cv2.imshow("YOLOv8 Autonomous Scanner", frame)
+            cv2.imshow("YOLOv8 HIGH-FPS Pipeline", frame)
             
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -136,6 +190,7 @@ def run_autonomous_scanner():
     except Exception as e:
         print(f"❌ Lỗi trong quá trình quét: {e}")
     finally:
+        stop_event.set()
         stream.stop()
         cv2.destroyAllWindows()
         print("👋 Đã dừng quét.")
