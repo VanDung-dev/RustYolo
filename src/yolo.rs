@@ -225,7 +225,8 @@ impl YoloV8Detector {
             let mut max_class = 0usize;
 
             for c in 0..self.num_classes {
-                let conf = out_data[base + 4 + c];
+                let raw_score = out_data[base + 4 + c];
+                let conf = 1.0 / (1.0 + (-raw_score).exp());
                 if conf > max_conf {
                     max_conf = conf;
                     max_class = c;
