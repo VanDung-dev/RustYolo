@@ -25,6 +25,6 @@ setuptools-scm>=9.2.2
 # Zero-copy Arrow
 pyarrow>=18.0.0
 
-# macOS specific dependencies cho GPU monitoring
-#pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'
-#pyobjc-framework-IOKit>=10.0; sys_platform == 'darwin'
+# ONNX
+onnx>=1.21.0
+onnxsim>=0.6.2
