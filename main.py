@@ -48,11 +48,14 @@ def run_camera_detection(
         print(f"Không thể mở camera với ID {camera_id}")
         sys.exit(1)
 
-    # Cấu hình camera
+    # Cấu hình camera 1080p @ 60fps
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS, 60)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Chỉ giữ lại 1 frame mới nhất
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+    cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
 
     # Tạo performance monitor và chạy background thread
     monitor = PerformanceMonitor()
@@ -73,12 +76,12 @@ def run_camera_detection(
             frame = cv2.resize(frame, (CAMERA_WIDTH, CAMERA_HEIGHT))
 
             # Chạy detection và đo thời gian
-            detect_start = time.time()
+            detect_start = time.perf_counter()
             results = detector.detect_frame(frame)
-            detect_time = (time.time() - detect_start) * 1000  # ms
+            detect_time = (time.perf_counter() - detect_start) * 1000  # ms
 
             # Vẽ kết quả lên frame
-            annotated_frame = detector.annotate_frame(frame, results)
+            annotated_frame = results[0].plot()
 
             # Gửi buffer frame sang Rust xử lý zero-copy
             frame_ptr = frame.__array_interface__['data'][0]

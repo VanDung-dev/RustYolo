@@ -28,10 +28,10 @@ def create_stats_panel(
     panel = np.zeros((height, width, 3), dtype=np.uint8)
     panel[:] = COLORS["bg"]  # Màu nền tối
 
-    y_offset = 20
-    line_height = 22
+    y_offset = 35
+    line_height = 44
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.38
+    font_scale = 0.76
 
     # Tiêu đề
     cv2.putText(
@@ -39,15 +39,15 @@ def create_stats_panel(
         "PERFORMANCE MONITOR",
         (15, y_offset),
         font,
-        0.7,
+        1.4,
         COLORS["green"],
-        2,
+        3,
     )
-    y_offset += 40
+    y_offset += 70
 
     # Đường phân cách
-    cv2.line(panel, (15, y_offset), (width - 15, y_offset), COLORS["green"], 2)
-    y_offset += 25
+    cv2.line(panel, (15, y_offset), (width - 15, y_offset), COLORS["green"], 3)
+    y_offset += 45
 
     # FPS
     fps = stats.get("fps", 0.0)
@@ -59,16 +59,16 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     cv2.putText(
         panel,
         f"{fps:.1f}",
-        (100, y_offset),
+        (200, y_offset),
         font,
-        font_scale + 0.1,
+        font_scale + 0.2,
         fps_color,
-        2,
+        3,
     )
     y_offset += line_height
 
@@ -82,22 +82,22 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     cv2.putText(
         panel,
         f"{latency:.1f} ms",
-        (100, y_offset),
+        (200, y_offset),
         font,
         font_scale,
         latency_color,
-        1,
+        2,
     )
     y_offset += line_height
 
     # Đường phân cách
-    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 1)
-    y_offset += 20
+    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
+    y_offset += 35
 
     # GPU Section
     cv2.putText(
@@ -105,11 +105,11 @@ def create_stats_panel(
         "GPU",
         (15, y_offset),
         font,
-        0.65,
+        1.3,
         COLORS["cyan"],
-        2,
+        3,
     )
-    y_offset += 30
+    y_offset += 55
 
     gpu_info = stats.get("gpu_info", {})
 
@@ -119,9 +119,9 @@ def create_stats_panel(
         f"Name: {gpu_info.get('name', 'N/A')[:35]}",
         (15, y_offset),
         font,
-        font_scale - 0.05,
+        font_scale - 0.1,
         COLORS["white"],
-        1,
+        2,
     )
     y_offset += line_height
 
@@ -135,25 +135,25 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     # Thanh progress
-    progress_x = 150
-    progress_width = 200
-    progress_y = y_offset - 8
+    progress_x = 220
+    progress_width = 350
+    progress_y = y_offset - 14
     cv2.rectangle(
         panel,
         (progress_x, progress_y),
-        (progress_x + progress_width, progress_y + 14),
+        (progress_x + progress_width, progress_y + 22),
         COLORS["dark_gray"],
-        1,
+        2,
     )
     fill_width = int(progress_width * min(gpu_load, 100) / 100)
     if fill_width > 0:
         cv2.rectangle(
             panel,
             (progress_x, progress_y),
-            (progress_x + fill_width, progress_y + 14),
+            (progress_x + fill_width, progress_y + 22),
             gpu_load_color,
             -1,
         )
@@ -167,7 +167,7 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     y_offset += line_height
 
@@ -179,7 +179,7 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     y_offset += line_height
 
@@ -191,13 +191,13 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     y_offset += line_height
 
     # Đường phân cách
-    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 1)
-    y_offset += 20
+    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
+    y_offset += 35
 
     # CPU Section
     cv2.putText(
@@ -205,11 +205,11 @@ def create_stats_panel(
         "CPU",
         (15, y_offset),
         font,
-        0.65,
+        1.3,
         COLORS["cyan"],
-        2,
+        3,
     )
-    y_offset += 30
+    y_offset += 55
 
     # CPU Usage
     cpu_usage = stats.get("cpu_usage", 0.0)
@@ -221,23 +221,23 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     # Progress bar cho CPU
-    progress_y = y_offset - 8
+    progress_y = y_offset - 14
     cv2.rectangle(
         panel,
         (progress_x, progress_y),
-        (progress_x + progress_width, progress_y + 14),
+        (progress_x + progress_width, progress_y + 22),
         COLORS["dark_gray"],
-        1,
+        2,
     )
     fill_width = int(progress_width * min(cpu_usage, 100) / 100)
     if fill_width > 0:
         cv2.rectangle(
             panel,
             (progress_x, progress_y),
-            (progress_x + fill_width, progress_y + 14),
+            (progress_x + fill_width, progress_y + 22),
             cpu_usage_color,
             -1,
         )
@@ -254,7 +254,7 @@ def create_stats_panel(
             font,
             font_scale,
             COLORS["white"],
-            1,
+            2,
         )
     else:
         cv2.putText(
@@ -264,13 +264,13 @@ def create_stats_panel(
             font,
             font_scale,
             COLORS["gray"],
-            1,
+            2,
         )
     y_offset += line_height
 
     # Đường phân cách
-    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 1)
-    y_offset += 20
+    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
+    y_offset += 35
 
     # Memory Section
     mem_info = stats.get("memory_usage", {})
@@ -279,11 +279,11 @@ def create_stats_panel(
         "MEMORY",
         (15, y_offset),
         font,
-        0.65,
+        1.3,
         COLORS["cyan"],
-        2,
+        3,
     )
-    y_offset += 30
+    y_offset += 55
 
     cv2.putText(
         panel,
@@ -292,7 +292,7 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     y_offset += line_height
 
@@ -305,23 +305,23 @@ def create_stats_panel(
         font,
         font_scale,
         COLORS["white"],
-        1,
+        2,
     )
     # Progress bar cho Memory
-    progress_y = y_offset - 8
+    progress_y = y_offset - 14
     cv2.rectangle(
         panel,
         (progress_x, progress_y),
-        (progress_x + progress_width, progress_y + 14),
+        (progress_x + progress_width, progress_y + 22),
         COLORS["dark_gray"],
-        1,
+        2,
     )
     fill_width = int(progress_width * min(mem_percent, 100) / 100)
     if fill_width > 0:
         cv2.rectangle(
             panel,
             (progress_x, progress_y),
-            (progress_x + fill_width, progress_y + 14),
+            (progress_x + fill_width, progress_y + 22),
             mem_color,
             -1,
         )

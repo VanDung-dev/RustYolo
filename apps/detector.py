@@ -14,7 +14,9 @@ class YoloDetector:
     def __init__(self, model_name: str = "yolov8n.pt", confidence: float = 0.5):
         self.model = YOLO(model_name)
         self.confidence = confidence
-        self.model.fuse()  # Fuse layers để tối ưu tốc độ
+        self.model.fuse()
+        self.model.to("mps")
+        self.model.half()
 
     def detect_frame(self, frame: np.ndarray) -> Any:
         """
@@ -32,7 +34,10 @@ class YoloDetector:
             verbose=False,
             stream=False,
             iou=0.45,
-            max_det=50,
+            max_det=15,
+            half=True,
+            device="mps",
+            agnostic_nms=True,
         )
 
     def annotate_frame(self, frame: np.ndarray, results: Any) -> np.ndarray:
