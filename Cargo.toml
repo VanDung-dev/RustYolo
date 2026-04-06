@@ -21,7 +21,7 @@ pyo3 = { version = "0.28.2", features = ["extension-module"] }
 
 
 # ONNX Runtime
-ort = "2.0.0-rc.6"
+ort = { version = "2.0.0-rc.6", features = ["coreml"] }
 ndarray = "0.17"
 image = "0.25"
 

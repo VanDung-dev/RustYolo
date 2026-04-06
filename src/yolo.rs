@@ -1,6 +1,8 @@
 //! Rust extension module cho macOS system monitoring và YOLOv8x inference
+//!
 
 use ndarray::Array4;
+use ort::execution_providers::CoreMLExecutionProvider;
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
@@ -75,6 +77,13 @@ impl YoloV8Detector {
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Failed to create session builder: {}",
+                    e
+                ))
+            })?
+            .with_execution_providers([CoreMLExecutionProvider::default().build()])
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "Failed to enable CoreML: {}",
                     e
                 ))
             })?
@@ -176,16 +185,11 @@ impl YoloV8Detector {
         let rgb = resized.to_rgb8();
         let (img_width, img_height) = (img.width(), img.height());
 
-        let mut input_array = Array4::<f32>::zeros((1, 3, self.input_height, self.input_width));
-
-        for y in 0..self.input_height {
-            for x in 0..self.input_width {
-                let pixel = rgb.get_pixel(x as u32, y as u32);
-                input_array[[0, 0, y, x]] = pixel[0] as f32 / 255.0;
-                input_array[[0, 1, y, x]] = pixel[1] as f32 / 255.0;
-                input_array[[0, 2, y, x]] = pixel[2] as f32 / 255.0;
-            }
-        }
+        // Optimize: Sử dụng from_shape_fn để tạo array nhanh hơn (vectorized-like)
+        let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
+            let pixel = rgb.get_pixel(x as u32, y as u32);
+            pixel[c] as f32 / 255.0
+        });
 
         let input_tensor = Value::from_array(input_array).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -211,7 +215,7 @@ impl YoloV8Detector {
         let out_data: Vec<f32> = out_data.to_vec();
         drop(outputs);
 
-        let num_predictions = out_data.len() / (4 + self.num_classes);
+        let num_anchors = 8400; // Standard for 640x640 YOLOv8
         let scale_x = img_width as f32 / self.input_width as f32;
         let scale_y = img_height as f32 / self.input_height as f32;
 
@@ -219,14 +223,20 @@ impl YoloV8Detector {
         let mut boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> =
             vec![Vec::new(); self.num_classes];
 
-        for i in 0..num_predictions {
-            let base = i * (4 + self.num_classes);
+        for i in 0..num_anchors {
             let mut max_conf = 0.0f32;
             let mut max_class = 0usize;
 
+            // Tìm class có confidence cao nhất
             for c in 0..self.num_classes {
-                let raw_score = out_data[base + 4 + c];
-                let conf = 1.0 / (1.0 + (-raw_score).exp());
+                // Layout is [84, 8400], so each class score is at (4 + c) * 8400 + i
+                let raw_score = out_data[(4 + c) * num_anchors + i];
+                
+                // YOLOv8 output scores are usually already sigmoid-activated if using standard export,
+                // but if they are raw logits, we'd need: 1.0 / (1.0 + (-raw_score).exp())
+                // In most Ultralytics exports, they are ALREADY scores (0.0 to 1.0).
+                let conf = raw_score; 
+                
                 if conf > max_conf {
                     max_conf = conf;
                     max_class = c;
@@ -234,10 +244,10 @@ impl YoloV8Detector {
             }
 
             if max_conf > self.conf_threshold {
-                let cx = out_data[base];
-                let cy = out_data[base + 1];
-                let w = out_data[base + 2];
-                let h = out_data[base + 3];
+                let cx = out_data[i];
+                let cy = out_data[num_anchors + i];
+                let w = out_data[2 * num_anchors + i];
+                let h = out_data[3 * num_anchors + i];
 
                 let x = (cx - w / 2.0) * scale_x;
                 let y = (cy - h / 2.0) * scale_y;
@@ -249,6 +259,8 @@ impl YoloV8Detector {
         }
 
         for (class_id, boxes) in boxes_by_class.iter().enumerate() {
+            if boxes.is_empty() { continue; }
+            
             let mut nms_boxes: Vec<(f32, f32, f32, f32, f32)> = boxes.clone();
             nms_boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
 
