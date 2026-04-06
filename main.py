@@ -81,7 +81,7 @@ def run_camera_detection(
             detect_time = (time.perf_counter() - detect_start) * 1000  # ms
 
             # Vẽ kết quả lên frame
-            annotated_frame = results[0].plot()
+            annotated_frame = detector.annotate_frame(frame, results)
 
             # Gửi buffer frame sang Rust xử lý zero-copy
             frame_ptr = frame.__array_interface__['data'][0]

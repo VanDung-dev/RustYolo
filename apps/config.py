@@ -19,7 +19,7 @@ STATS_CACHE_TTL = 0.5  # giây
 
 # Cấu hình YOLO
 DEFAULT_CONFIDENCE = 0.5
-DEFAULT_MODEL = "yolov8n.pt"
+DEFAULT_MODEL = "yolov8n.onnx"
 DEFAULT_CAMERA_ID = 0
 
 # Màu sắc UI
