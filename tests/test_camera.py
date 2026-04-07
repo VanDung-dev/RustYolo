@@ -105,8 +105,8 @@ def run_autonomous_scanner():
     
     # Khởi tạo modules từ Rust (Release mode khuyên dùng)
     try:
-        # Sử dụng bản X-Large tối ưu
-        detector = YoloV8Detector("yolov8x.onnx", conf_threshold=0.25, iou_threshold=0.45)
+        # Sử dụng bản Nano tối ưu
+        detector = YoloV8Detector("yolov8n.onnx", conf_threshold=0.25, iou_threshold=0.45)
         monitor = PerformanceMonitor()
     except Exception as e:
         print(f"❌ Lỗi khởi tạo modules: {e}")

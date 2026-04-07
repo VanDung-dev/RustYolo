@@ -261,6 +261,35 @@ impl YoloV8Detector {
     fn set_iou_threshold(&mut self, threshold: f32) {
         self.iou_threshold = threshold;
     }
+
+    /// Detect trực tiếp từ raw bytes buffer
+    fn detect_from_bytes<'py>(
+        &mut self,
+        py: Python<'py>,
+        raw_buffer: &[u8],
+        width: usize,
+        height: usize,
+    ) -> PyResult<Py<PyList>> {
+        let t_pre = Instant::now();
+        let input_array = crate::image_proc::preprocess_image_kornia(
+            raw_buffer,
+            width,
+            height,
+            self.input_width,
+            self.input_height,
+        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Preprocessing failed: {}", e)))?;
+        self.last_preprocess_ms = t_pre.elapsed().as_secs_f64() * 1000.0;
+
+        let detections = self.run_inference_internal(py, input_array, (width, height))?;
+
+        let py_list = PyList::empty(py);
+        for det in detections {
+            let py_det = Py::new(py, det)?;
+            py_list.append(py_det)?;
+        }
+
+        Ok(py_list.into())
+    }
 }
 
 /// Internal methods for YoloV8Detector
