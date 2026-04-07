@@ -1,5 +1,5 @@
 """
-✅ Module YOLOv8 Object Detector - Giao tiếp với Rust Engine
+Module YOLOv8 Object Detector - Giao tiếp với Rust Engine
 
 Kiến trúc:
 - File này là WRAPPER Python không chứa hằng số hay cấu hình
@@ -13,10 +13,10 @@ import cv2
 import numpy as np
 import pyarrow as pa
 
-# ✅ Import trực tiếp Native Rust Engine đã biên dịch
+# Import trực tiếp Native Rust Engine đã biên dịch
 from rust_yolo import YoloV8Detector
 
-# ✅ Toàn bộ constants được quản lý tập trung tại apps/config.py
+# Toàn bộ constants được quản lý tập trung tại apps/config.py
 from apps.config import (
     COCO_CLASSES,
     SEG_PALETTE,
@@ -114,11 +114,11 @@ class YoloDetector:
         annotated = frame.copy()
         h, w = frame.shape[:2]
 
-        # ── Classification Model (Vẽ panel riêng, không có bbox) ───────────────
+        # Classification Model (Vẽ panel riêng, không có bbox)
         if self.is_cls_model:
             return self._draw_classification_overlay(annotated, results)
 
-        # ── Segmentation masks (vẽ trước để bbox/label ở trên) ───────────────
+        # Segmentation masks (vẽ trước để bbox/label ở trên)
         if self.is_seg_model and self._proto is not None:
             annotated = self._draw_seg_masks(annotated, results, h, w)
 
@@ -152,7 +152,7 @@ class YoloDetector:
                 label = f"{COCO_CLASSES[class_id]}" if class_id < len(COCO_CLASSES) else f"ID:{class_id}"
             label = f"{label} {conf:.2f}"
 
-            # ── Draw Box / Poly ──────────────────────────────────────────────
+            # Draw Box / Poly
             if self.is_obb_model and len(det.get("keypoints", [])) >= 4:
                 # OBB: Vẽ đa giác từ 4 đỉnh
                 pts = np.array([
@@ -343,11 +343,9 @@ class YoloDetector:
             bar_w = int(conf * bar_max_w)
             
             # Bar background
-            cv2.rectangle(annotated, (bar_start_x, y_pos - 12), 
-                         (bar_start_x + bar_max_w, y_pos + 2), (50, 50, 50), -1)
+            cv2.rectangle(annotated, (bar_start_x, y_pos - 12), (bar_start_x + bar_max_w, y_pos + 2), (50, 50, 50), -1)
             # Bar fill
-            cv2.rectangle(annotated, (bar_start_x, y_pos - 12), 
-                         (bar_start_x + bar_w, y_pos + 2), (0, 255, 0), -1)
+            cv2.rectangle(annotated, (bar_start_x, y_pos - 12), (bar_start_x + bar_w, y_pos + 2), (0, 255, 0), -1)
             
             # % text
             cv2.putText(annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos), 

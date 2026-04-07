@@ -1,4 +1,4 @@
-//! ✅ Hệ thống Monitoring hiệu năng Native macOS
+//! Hệ thống Monitoring hiệu năng Native macOS
 //!
 //! Chạy hoàn toàn độc lập trên background thread riêng:
 //! - Đọc trực tiếp sensor hệ thống macOS không qua trung gian
@@ -7,7 +7,7 @@
 //! - Đo FPS và breakdown latency
 //! - Tính toán ước lượng hiệu năng GPU Apple Silicon
 //!
-//! ✅ Không gây block hay overhead cho luồng chính AI
+//! Không gây block hay overhead cho luồng chính AI
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -28,7 +28,7 @@ pub struct PerformanceMonitor {
     ai_latency: f64,
     rust_latency: f64,
     frame_times: Vec<f64>,
-    
+
     // Thermal data
     current_temp: f32,
     prev_temp: f32,
@@ -44,7 +44,7 @@ impl PerformanceMonitor {
             RefreshKind::everything().with_cpu(CpuRefreshKind::everything()),
         );
         system.refresh_all();
-        
+
         let mut components = Components::new();
         components.refresh_list();
 
@@ -78,7 +78,7 @@ impl PerformanceMonitor {
                     sys.refresh_cpu_all();
                     sys.refresh_memory();
                 }
-                
+
                 if let Ok(mut comp) = components_clone.lock() {
                     comp.refresh_list();
                 }
@@ -109,10 +109,10 @@ impl PerformanceMonitor {
         self.frame_times.push(now_sys);
         self.frame_times.retain(|&t| now_sys - t < 1.0);
         self.fps = self.frame_times.len() as f64;
-        
-        // ✅ Cập nhật chỉ số nhiệt độ
+
+        // Cập nhật chỉ số nhiệt độ
         if let Ok(comp) = self.components.lock() {
-            // ✅ Tìm sensor nhiệt độ CPU / GPU từ danh sách sensor hệ thống
+            // Tìm sensor nhiệt độ CPU / GPU từ danh sách sensor hệ thống
             let mut max_temp = 0.0;
             for component in comp.iter() {
                 let name = component.label().to_lowercase();
@@ -122,7 +122,7 @@ impl PerformanceMonitor {
                     }
                 }
             }
-            
+
             if max_temp > 0.0 {
                 let now = Instant::now();
                 let duration = now.duration_since(self.last_temp_update).as_secs_f32();
@@ -181,8 +181,12 @@ impl PerformanceMonitor {
         stats
             .set_item(pyo3::intern!(py, "cpu_usage"), cpu_usage)
             .unwrap();
-        stats.set_item(pyo3::intern!(py, "cpu_temp"), self.current_temp).unwrap();
-        stats.set_item(pyo3::intern!(py, "dt_dt"), self.dt_dt).unwrap();
+        stats
+            .set_item(pyo3::intern!(py, "cpu_temp"), self.current_temp)
+            .unwrap();
+        stats
+            .set_item(pyo3::intern!(py, "dt_dt"), self.dt_dt)
+            .unwrap();
 
         // Memory info
         let mem_used = sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -204,11 +208,11 @@ impl PerformanceMonitor {
             .set_item(pyo3::intern!(py, "memory_usage"), memory_usage)
             .unwrap();
 
-        // ✅ Thông tin GPU Apple Silicon
-        // ✅ macOS không cung cấp API đọc trực tiếp GPU metrics nên ước lượng từ nhiệt độ CPU
+        // Thông tin GPU Apple Silicon
+        // macOS không cung cấp API đọc trực tiếp GPU metrics nên ước lượng từ nhiệt độ CPU
         let gpu_info = PyDict::new(py);
-        
-        // ✅ Ước tính hiệu năng GPU dựa trên nhiệt độ và tải CPU
+
+        // Ước tính hiệu năng GPU dựa trên nhiệt độ và tải CPU
         let gpu_load = (cpu_usage * 0.85).clamp(0.0, 100.0);
         let gpu_temp = self.current_temp + 2.5;
         let gpu_power = 2.2 + (gpu_load / 100.0) * 18.0; // ✅ Phạm vi 2.2W idle -> 20W max

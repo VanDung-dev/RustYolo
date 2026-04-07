@@ -1,5 +1,5 @@
 """
-✅ Cấu hình toàn bộ ứng dụng
+Cấu hình toàn bộ ứng dụng
 
 Tất cả giá trị trong file này có thể chỉnh sửa mà không cần biên dịch lại Rust.
 Các thay đổi có hiệu lực ngay lập tức khi khởi động lại ứng dụng.

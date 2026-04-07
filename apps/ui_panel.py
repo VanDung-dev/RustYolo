@@ -1,5 +1,5 @@
 """
-✅ Module vẽ UI Panel Thống kê Hiệu năng
+Module vẽ UI Panel Thống kê Hiệu năng
 
 Module này chỉ chịu trách nhiệm VẼ hình ảnh, không tính toán gì cả:
 - Nhận dictionary stats đã được tính toán hoàn toàn từ Rust
