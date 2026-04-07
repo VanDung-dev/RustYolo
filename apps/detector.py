@@ -25,8 +25,8 @@ from apps.config import (
     KP_COLORS,
     POSE_KP_CONF,
     IMAGENET_CLASSES,
+    DOTA_CLASSES,
 )
-
 
 
 class YoloDetector:
@@ -44,6 +44,10 @@ class YoloDetector:
         self.is_pose_model = "-pose" in model_name.lower()
         self.is_seg_model = "-seg" in model_name.lower()
         self.is_cls_model = "-cls" in model_name.lower()
+        self.is_obb_model = "-obb" in model_name.lower() or (
+            hasattr(self.detector, "is_obb_model") and self.detector.is_obb_model
+        )
+
 
 
         # Proto tensor cache (cập nhật mỗi frame, dùng trong annotate_frame)
@@ -63,8 +67,11 @@ class YoloDetector:
             (results: list[dict], timing: dict)
         """
         try:
+            # YOLOv8 expects RGB, while OpenCV provides BGR
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
             arr_cap, sch_cap, proto_arr_cap, proto_sch_cap = \
-                self.detector.detect_to_arrow(frame)
+                self.detector.detect_to_arrow(frame_rgb)
 
             results_arrow = pa.Array._import_from_c_capsule(sch_cap, arr_cap)
 
@@ -135,17 +142,44 @@ class YoloDetector:
             # Label text
             if self.is_pose_model:
                 label = f"Person: {conf:.2f}"
+            elif self.is_obb_model:
+                idx = det["class_id"]
+                name = DOTA_CLASSES[idx] if idx < len(DOTA_CLASSES) else f"ID:{idx}"
+                label = f"{name}: {conf:.2f}"
             else:
                 class_id = det["class_id"]
+
                 label = f"{COCO_CLASSES[class_id]}" if class_id < len(COCO_CLASSES) else f"ID:{class_id}"
             label = f"{label} {conf:.2f}"
 
+            # ── Draw Box / Poly ──────────────────────────────────────────────
+            if self.is_obb_model and len(det.get("keypoints", [])) >= 4:
+                # OBB: Vẽ đa giác từ 4 đỉnh
+                pts = np.array([
+                    [int(kp[0]), int(kp[1])] for kp in det["keypoints"][:4]
+                ], np.int32).reshape((-1, 1, 2))
+                cv2.polylines(annotated, [pts], isClosed=True, color=(0, 255, 255), 
+                              thickness=2, lineType=cv2.LINE_AA)
+
+                # Label tại đỉnh đầu tiên
+                label_pos = (int(det["keypoints"][0][0]), int(det["keypoints"][0][1]) - 10)
+            else:
+                # Standard Rect
+                x1 = max(0, int(det["x"]))
+                y1 = max(0, int(det["y"]))
+                x2 = min(w - 1, int(det["x"] + det["w"]))
+                y2 = min(h - 1, int(det["y"] + det["h"]))
+                box_thick = 1 if (self.is_pose_model or self.is_seg_model) else 2
+                box_color = SEG_PALETTE[det["class_id"] % len(SEG_PALETTE)] if self.is_seg_model else (0, 255, 0)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, box_thick)
+                label_pos = (x1, y1 - 10)
+
             font = cv2.FONT_HERSHEY_SIMPLEX
             (tw, th), bl = cv2.getTextSize(label, font, 0.55, 1)
-            ly1 = max(0, y1 - th - bl - 4)
-            cv2.rectangle(annotated, (x1, ly1), (x1 + tw, y1), (0, 0, 0), -1)
-            cv2.putText(annotated, label, (x1, max(0, y1 - 4)),
-                        font, 0.55, box_color, 1, cv2.LINE_AA)
+            ly1 = max(0, label_pos[1] - th - bl - 4)
+            cv2.rectangle(annotated, (label_pos[0], ly1), (label_pos[0] + tw, label_pos[1]), (0, 0, 0), -1)
+            cv2.putText(annotated, label, (label_pos[0], max(0, label_pos[1] - 4)),
+                        font, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
 
             # Skeleton (pose model only)
             if self.is_pose_model and "keypoints" in det:

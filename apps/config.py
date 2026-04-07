@@ -57,6 +57,15 @@ COCO_CLASSES = [
     "scissors", "teddy bear", "hair drier", "toothbrush",
 ]
 
+# OBB: DOTA dataset class names (15 classes)
+DOTA_CLASSES = [
+    "plane", "ship", "storage tank", "baseball diamond", "tennis court",
+    "basketball court", "ground track field", "harbor", "bridge", 
+    "large vehicle", "small vehicle", "helicopter", "roundabout", 
+    "soccer ball field", "swimming pool"
+]
+
+
 # ImageNet class names (1000 classes) - Dùng cho YOLOv8-cls
 def _load_imagenet_classes() -> list:
     import os

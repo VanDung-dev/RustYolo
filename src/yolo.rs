@@ -74,6 +74,7 @@ pub struct YoloV8Detector {
     #[pyo3(get)]
     pub is_cls_model: bool,
     #[pyo3(get)]
+    pub is_obb_model: bool,
     pub last_preprocess_ms: f64,
     #[pyo3(get)]
     pub last_inference_ms: f64,
@@ -121,11 +122,13 @@ impl YoloV8Detector {
             num_keypoints: 0,
             num_mask_coeffs: 0,
             is_cls_model: false,
+            is_obb_model: false,
             last_preprocess_ms: 0.0,
             last_inference_ms: 0.0,
             last_nms_ms: 0.0,
         })
     }
+
 
 
     #[getter]
@@ -361,30 +364,35 @@ impl YoloV8Detector {
         // Classification: output0 shape là [1, 1000] (2D)
         if ndim == 2 {
             self.is_cls_model = true;
+            self.is_obb_model = false;
             self.num_classes = total_channels;
             self.num_keypoints = 0;
             self.num_mask_coeffs = 0;
             
+            // Giải phóng outputs trước để tránh lỗi borrow checker
             let cls_results = self.decode_cls_output(&out_data, total_channels);
             return Ok((cls_results, None));
         }
 
-
         self.is_cls_model = false;
         let num_anchors = out_shape[2] as usize;
 
+        // OBB: Cấu hình linh hoạt hơn (4 + NC + 1)
         // Pose: total_channels == 56  (4 + 1 + 17*3)
         // Seg:  total_channels == 116 (4 + 80 + 32)
         // Det:  total_channels == 84  (4 + 80)
-        let (num_classes, num_keypoints, num_mask_coeffs) = if total_channels == 56 {
-            (1_usize, 17_usize, 0_usize)
+        let (num_classes, num_keypoints, num_mask_coeffs, is_obb) = if total_channels == 56 {
+            (1_usize, 17_usize, 0_usize, false)
         } else if total_channels > 84 && total_channels != 56 {
-            // Seg: dư sau 4+80 = 80+4 là mask coefficients
             let nc = 80_usize;
             let nm = total_channels - 4 - nc;
-            (nc, 0_usize, nm)
+            (nc, 0_usize, nm, false)
+        } else if total_channels == 20 || (total_channels > 4 && total_channels < 40) {
+            // Heuristic cho OBB: NC thường nhỏ (DOTA=15), tổng kênh NC+5
+            let nc = total_channels - 5;
+            (nc, 0_usize, 0_usize, true)
         } else {
-            ((total_channels - 4), 0_usize, 0_usize)
+            ((total_channels - 4), 0_usize, 0_usize, false)
         };
 
         self.num_classes     = num_classes;
@@ -401,6 +409,9 @@ impl YoloV8Detector {
         let mut all_boxes: Vec<(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>)> =
             Vec::with_capacity(128);
 
+        let mut global_max_conf = 0.0;
+        let mut total_raw_dets = 0;
+
         for i in 0..num_anchors {
             let mut max_conf  = 0.0f32;
             let mut max_class = 0_usize;
@@ -413,6 +424,10 @@ impl YoloV8Detector {
                 }
             }
 
+            if max_conf > global_max_conf {
+                global_max_conf = max_conf;
+            }
+
             if max_conf <= conf_threshold {
                 continue;
             }
@@ -422,18 +437,53 @@ impl YoloV8Detector {
             let w  = out_data[2 * num_anchors + i];
             let h  = out_data[3 * num_anchors + i];
 
-            let x      = (cx - w / 2.0) * scale_x;
-            let y      = (cy - h / 2.0) * scale_y;
-            let bbw    = w * scale_x;
-            let bbh    = h * scale_y;
+            // ── Oriented Bounding Box (OBB) ──────────────────────────────────
+            let mut keypoints = Vec::with_capacity(num_keypoints);
 
-            let x   = x.clamp(0.0, orig_dim.0 as f32);
-            let y   = y.clamp(0.0, orig_dim.1 as f32);
-            let bbw = bbw.clamp(0.0, orig_dim.0 as f32);
-            let bbh = bbh.clamp(0.0, orig_dim.1 as f32);
+            let (final_x, final_y, final_w, final_h) = if is_obb {
+                // Angle nằm ở channel cuối cùng: index 4 + num_classes
+                let angle = out_data[(4 + num_classes) * num_anchors + i];
+                
+                // Decode 4 đỉnh xoay
+                let cos_a = angle.cos();
+                let sin_a = angle.sin();
+                
+                let dx = w / 2.0 * cos_a;
+                let dy = w / 2.0 * sin_a;
+                let ex = -h / 2.0 * sin_a;
+                let ey = h / 2.0 * cos_a;
+                
+                // 4 đỉnh chưa scale
+                let pts = [
+                    (cx - dx - ex, cy - dy - ey),
+                    (cx + dx - ex, cy + dy - ey),
+                    (cx + dx + ex, cy + dy + ey),
+                    (cx - dx + ex, cy + dy + ey),
+                ];
+
+                // Scale và lưu keypoints (corners)
+                for pt in &pts {
+                    keypoints.push((pt.0 * scale_x, pt.1 * scale_y, 1.0));
+                }
+
+                // Tính toán Axis-Aligned Bounding Box (AABB) thực tế để dùng trong NMS
+                let min_x = pts.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
+                let min_y = pts.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
+                let max_x = pts.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
+                let max_y = pts.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
+
+                (min_x * scale_x, min_y * scale_y, (max_x - min_x) * scale_x, (max_y - min_y) * scale_y)
+            } else {
+                ((cx - w / 2.0) * scale_x, (cy - h / 2.0) * scale_y, w * scale_x, h * scale_y)
+            };
+
+
+            let x   = final_x.clamp(0.0, orig_dim.0 as f32);
+            let y   = final_y.clamp(0.0, orig_dim.1 as f32);
+            let bbw = final_w.clamp(0.0, orig_dim.0 as f32);
+            let bbh = final_h.clamp(0.0, orig_dim.1 as f32);
 
             // ── Keypoints (Pose) ─────────────────────────────────────────────
-            let mut keypoints = Vec::with_capacity(17);
             let output_len    = out_data.len();
             let base_offset   = (4 + num_classes) * num_anchors;
 
