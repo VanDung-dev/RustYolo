@@ -58,7 +58,7 @@ def create_stats_panel(
     )
     cv2.putText(
         panel,
-        "FPS:",
+        "AI FPS:",
         (15, y_offset),
         font,
         font_scale,
@@ -195,41 +195,59 @@ def create_stats_panel(
     y_offset += line_height
 
     # GPU Power
+    gpu_power = gpu_info.get("power", 0.0)
+    gpu_power_color = (
+        COLORS["green"] if gpu_power < 8
+        else COLORS["yellow"] if gpu_power < 15
+        else COLORS["red"]
+    )
     cv2.putText(
         panel,
-        f"Power: {gpu_info.get('power', 'N/A')}",
+        f"Power:",
         (15, y_offset),
         font,
         font_scale,
         COLORS["white"],
+        2,
+    )
+    cv2.putText(
+        panel,
+        f"{gpu_power:.1f} W",
+        (200, y_offset),
+        font,
+        font_scale,
+        gpu_power_color,
         2,
     )
     y_offset += line_height
 
     # GPU Temperature
+    gpu_temp = gpu_info.get("temperature", 0.0)
+    gpu_temp_color = (
+        COLORS["green"] if gpu_temp < 65
+        else COLORS["yellow"] if gpu_temp < 85
+        else COLORS["red"]
+    )
     cv2.putText(
         panel,
-        f"Temp: {gpu_info.get('temperature', 'N/A')}",
+        f"Temp:",
         (15, y_offset),
         font,
         font_scale,
         COLORS["white"],
+        2,
+    )
+    cv2.putText(
+        panel,
+        f"{gpu_temp:.1f} °C",
+        (200, y_offset),
+        font,
+        font_scale,
+        gpu_temp_color,
         2,
     )
     y_offset += line_height
 
-    # GPU Memory
-    mem_used_gpu = gpu_info.get('memory_used', 'N/A')
-    mem_total_gpu = gpu_info.get('memory_total', 'N/A')
-    cv2.putText(
-        panel,
-        f"Memory: {mem_used_gpu} / {mem_total_gpu}",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
     y_offset += line_height
 
     # Đường phân cách
