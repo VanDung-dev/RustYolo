@@ -1,5 +1,13 @@
-//! Rust extension module cho macOS system monitoring và YOLOv8x inference
+//! ✅ Hệ thống Monitoring hiệu năng Native macOS
 //!
+//! Chạy hoàn toàn độc lập trên background thread riêng:
+//! - Đọc trực tiếp sensor hệ thống macOS không qua trung gian
+//! - Theo dõi CPU, Memory, nhiệt độ
+//! - Tính toán Thermal Gradient dT/dt realtime
+//! - Đo FPS và breakdown latency
+//! - Tính toán ước lượng hiệu năng GPU Apple Silicon
+//!
+//! ✅ Không gây block hay overhead cho luồng chính AI
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -102,9 +110,9 @@ impl PerformanceMonitor {
         self.frame_times.retain(|&t| now_sys - t < 1.0);
         self.fps = self.frame_times.len() as f64;
         
-        // Update temperature metrics
+        // ✅ Cập nhật chỉ số nhiệt độ
         if let Ok(comp) = self.components.lock() {
-            // Find CPU/GPU temp sensor
+            // ✅ Tìm sensor nhiệt độ CPU / GPU từ danh sách sensor hệ thống
             let mut max_temp = 0.0;
             for component in comp.iter() {
                 let name = component.label().to_lowercase();
@@ -196,13 +204,14 @@ impl PerformanceMonitor {
             .set_item(pyo3::intern!(py, "memory_usage"), memory_usage)
             .unwrap();
 
-        // GPU info (Apple Silicon real metrics)
+        // ✅ Thông tin GPU Apple Silicon
+        // ✅ macOS không cung cấp API đọc trực tiếp GPU metrics nên ước lượng từ nhiệt độ CPU
         let gpu_info = PyDict::new(py);
         
-        // Calculate real GPU metrics from system sensors and cpu performance
+        // ✅ Ước tính hiệu năng GPU dựa trên nhiệt độ và tải CPU
         let gpu_load = (cpu_usage * 0.85).clamp(0.0, 100.0);
         let gpu_temp = self.current_temp + 2.5;
-        let gpu_power = 2.2 + (gpu_load / 100.0) * 18.0; // 2.2W idle up to 20W max
+        let gpu_power = 2.2 + (gpu_load / 100.0) * 18.0; // ✅ Phạm vi 2.2W idle -> 20W max
 
         gpu_info
             .set_item(pyo3::intern!(py, "available"), true)

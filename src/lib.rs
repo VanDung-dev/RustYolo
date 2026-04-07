@@ -1,5 +1,12 @@
-//! Rust extension module cho macOS system monitoring và YOLOv8x inference
-//! Sử dụng PyO3 0.28, sysinfo 0.32 và ONNX Runtime
+//! ✅ Native Extension Rust cho Python
+//!
+//! Đây là entry point chính của toàn bộ engine.
+//! File này chịu trách nhiệm:
+//! - Export các class Rust sang Python thông qua PyO3
+//! - Khởi tạo module native khi Python import
+//! - Đăng ký binding cho tất cả các chức năng
+//!
+//! ⚠️ Toàn bộ logic tính toán nằm trong các file con, không ở đây.
 
 use pyo3::prelude::*;
 
@@ -11,7 +18,7 @@ pub mod image_proc;
 pub use monitor::PerformanceMonitor;
 pub use yolo::{YoloDetection, YoloV8Detector};
 
-/// Module initialization
+/// Khởi tạo module
 #[pymodule]
 #[allow(unused_variables)]
 fn rust_yolo(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

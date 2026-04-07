@@ -1,5 +1,15 @@
-//! Rust extension module cho macOS system monitoring và YOLOv8x inference
-//! Với tối ưu hóa Rayon (đa luồng) và Apache Arrow (Zero-copy)
+//! ✅ Engine YOLOv8 Inference Native
+//!
+//! Toàn bộ logic AI chạy ở file này 100%:
+//! - Load model ONNX
+//! - Tăng tốc CoreML phần cứng Apple Silicon
+//! - Preprocessing ảnh
+//! - Inference ONNX Runtime
+//! - Decode output tensor
+//! - Non Maximum Suppression (NMS) song song Rayon
+//! - Export kết quả Zero Copy qua Apache Arrow
+//!
+//! ✅ Không có bất kỳ logic nào ở phía Python
 
 use ndarray::Array4;
 use ort::execution_providers::{CoreML, ExecutionProvider};
@@ -139,7 +149,7 @@ impl YoloV8Detector {
     #[getter]
     fn nms_ms(&self) -> f64 { self.last_nms_ms }
 
-    /// YOLO Inference returning Arrow Capsules (array, schema).
+    /// ✅ Chạy inference YOLO và trả về kết quả Zero Copy qua Arrow Capsule
     fn detect_to_arrow<'py>(
         &mut self,
         py: Python<'py>,
@@ -158,7 +168,7 @@ impl YoloV8Detector {
             std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) 
         };
 
-        // ⏱ Measure preprocessing time
+        // ✅ Đo thời gian tiền xử lý ảnh
         let t_pre = Instant::now();
         let input_array = crate::image_proc::preprocess_image_kornia(
             raw_data,
@@ -268,7 +278,7 @@ impl YoloV8Detector {
             ))
         })?;
 
-        // ⏱ Measure ONNX inference time only
+        // ✅ Đo thời gian inference ONNX Runtime
         let t_infer = Instant::now();
         let outputs = py.detach(|| {
             self.session.run(ort::inputs![input_tensor])
@@ -289,7 +299,7 @@ impl YoloV8Detector {
         let scale_y = orig_dim.1 as f32 / self.input_height as f32;
         let conf_threshold = self.conf_threshold;
 
-        // ⏱ Measure NMS + decode time
+        // ✅ Đo thời gian decode output và Non Maximum Suppression
         let t_nms = Instant::now();
         
         // ✅ Optimized decode: single pass filter only valid boxes first
