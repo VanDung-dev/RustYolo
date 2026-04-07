@@ -5,7 +5,6 @@ Module YOLOv8 Object Detector (Rust Engine API)
 import cv2
 import numpy as np
 import pyarrow as pa
-from typing import List
 # Import engine phân tích từ CoreML/Rust siêu tối ưu!
 from rust_yolo import YoloV8Detector
 
@@ -40,29 +39,33 @@ class YoloDetector:
         self.input_w = 640
         self.input_h = 640
 
-    def detect_frame(self, frame: np.ndarray) -> List[dict]:
+    def detect_frame(self, frame: np.ndarray) -> tuple:
         """
         Chạy detection trên 1 frame với Apache Arrow (Zero-copy Results).
-        Quá trình Resize tối ưu (SIMD) được xử lý bên trong Rust bằng Kornia.
+        Trả về (results, timing_dict) để hiển thị breakdown latency chi tiết.
         """
-        # Trực tiếp truyền raw frame sang Kornia (Rust)
         try:
             array_capsule, schema_capsule = self.detector.detect_to_arrow(frame)
-            
-            # Reconstruct using PyArrow from capsules (Zero-copy)
-            results_arrow = pa.Array._import_from_c_capsule(schema_capsule, array_capsule)
-            
+            results_arrow = pa.Array._import_from_c_capsule(
+                schema_capsule, array_capsule
+            )
+
+            # Đọc timing breakdown từ Rust (đã được đo bằng Instant)
+            timing = {
+                "preprocess_ms": self.detector.preprocess_ms,
+                "inference_ms":  self.detector.inference_ms,
+                "nms_ms":        self.detector.nms_ms,
+            }
+
             if len(results_arrow) == 0:
-                return []
+                return [], timing
 
-            # Chuyển đổi Arrow Array sang Dictionary List cực nhanh
-            return results_arrow.to_pylist()
+            return results_arrow.to_pylist(), timing
         except AttributeError as e:
-            # Fallback if method is missing or fails
             print(f"Lỗi Arrow: {e}")
-            return []
+            return [], {}
 
-    def annotate_frame(self, frame: np.ndarray, results: List[dict]) -> np.ndarray:
+    def annotate_frame(self, frame: np.ndarray, results: list[dict]) -> np.ndarray:
         """
         Vẽ kết quả detection lên frame gốc bằng OpenCV tốc độ cao.
         """

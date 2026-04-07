@@ -4,13 +4,13 @@ Module tạo giao diện panel thống kê hiệu năng
 
 import cv2
 import numpy as np
-from typing import Dict, Any
+from typing import Any
 
 from .config import COLORS, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT
 
 
 def create_stats_panel(
-    stats: Dict[str, Any],
+    stats: dict[str, Any],
     width: int = STATS_PANEL_WIDTH,
     height: int = STATS_PANEL_HEIGHT,
 ) -> np.ndarray:
@@ -67,7 +67,7 @@ def create_stats_panel(
     )
     cv2.putText(
         panel,
-        f"{fps:.1f}",
+        f"{fps:.2f}",
         (200, y_offset),
         font,
         font_scale + 0.2,
@@ -94,7 +94,7 @@ def create_stats_panel(
     )
     cv2.putText(
         panel,
-        f"{ai_latency:.1f} ms",
+        f"{ai_latency:.2f} ms",
         (201, y_offset),
         font,
         font_scale,
@@ -103,27 +103,27 @@ def create_stats_panel(
     )
     y_offset += line_height
 
-    # Rust Latency
-    rust_latency = stats.get("rust_latency", 0.0)
-    rust_color = COLORS["cyan"] if rust_latency < 2 else COLORS["yellow"]
-    cv2.putText(
-        panel,
-        "Rust Latency:",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    cv2.putText(
-        panel,
-        f"{rust_latency:.2f} ms",
-        (201, y_offset),
-        font,
-        font_scale,
-        rust_color,
-        2,
-    )
+    # Rust Latency Breakdown
+    pre_ms  = stats.get("preprocess_ms", 0.0)
+    inf_ms  = stats.get("inference_ms",  0.0)
+    nms_ms  = stats.get("nms_ms",        0.0)
+
+    cv2.putText(panel, "Preprocess:", (15, y_offset), font,
+                font_scale - 0.1, COLORS["gray"], 1)
+    cv2.putText(panel, f"{pre_ms:.1f} ms", (200, y_offset), font,
+                font_scale - 0.1, COLORS["cyan"], 2)
+    y_offset += int(line_height * 0.8)
+
+    cv2.putText(panel, "Inference:", (15, y_offset), font,
+                font_scale - 0.1, COLORS["gray"], 1)
+    cv2.putText(panel, f"{inf_ms:.1f} ms", (200, y_offset), font,
+                font_scale - 0.1, COLORS["yellow"], 2)
+    y_offset += int(line_height * 0.8)
+
+    cv2.putText(panel, "NMS:", (15, y_offset), font,
+                font_scale - 0.1, COLORS["gray"], 1)
+    cv2.putText(panel, f"{nms_ms:.1f} ms", (200, y_offset), font,
+                font_scale - 0.1, COLORS["cyan"], 2)
     y_offset += line_height
 
     # Đường phân cách
@@ -165,7 +165,7 @@ def create_stats_panel(
     )
     cv2.putText(
         panel,
-        f"Load: {gpu_load:.1f}%",
+        f"Load: {gpu_load:.2f}%",
         (15, y_offset),
         font,
         font_scale,
@@ -257,7 +257,7 @@ def create_stats_panel(
     )
     cv2.putText(
         panel,
-        f"Usage: {cpu_usage:.1f}%",
+        f"Usage: {cpu_usage:.2f}%",
         (15, y_offset),
         font,
         font_scale,
@@ -296,7 +296,7 @@ def create_stats_panel(
         )
         cv2.putText(
             panel,
-            f"Temp: {cpu_temp:.1f}°C",
+            f"Temp: {cpu_temp:.2f}°C",
             (15, y_offset),
             font,
             font_scale,
@@ -363,7 +363,7 @@ def create_stats_panel(
     mem_color = COLORS["green"] if mem_percent < 50 else COLORS["yellow"] if mem_percent < 80 else COLORS["red"]
     cv2.putText(
         panel,
-        f"Usage: {mem_percent:.1f}%",
+        f"Usage: {mem_percent:.2f}%",
         (15, y_offset),
         font,
         font_scale,

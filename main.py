@@ -93,15 +93,15 @@ def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
                 continue
                 
             detect_start = time.perf_counter()
-            results = detector.detect_frame(frame)
+            results, timing = detector.detect_frame(frame)
             detect_time = (time.perf_counter() - detect_start) * 1000  # ms
-            
-            # Đẩy kết quả + thời gian xử lý xuống queue
+
+            # Đẩy kết quả + thời gian xử lý (bao gồm breakdown) xuống queue
             if result_queue.full():
                 try: result_queue.get_nowait()
                 except queue.Empty: pass
-                
-            result_queue.put((results, detect_time))
+
+            result_queue.put((results, detect_time, timing))
             frame_queue.task_done()
             
         except queue.Empty:
@@ -165,10 +165,12 @@ def run_camera_detection(
 
             # Lấy kết quả AI mới nhất không block UI
             try:
-                current_results, detect_time = result_queue.get_nowait()
-                # Cập nhật thông số độ trễ (AI Engine Latency)
+                current_results, detect_time, rust_timing = result_queue.get_nowait()
                 monitor.update_frame_time(detect_time)
+                # Merge Rust timing breakdown vào stats để UI hiển thị
+                stats_extra = rust_timing
             except queue.Empty:
+                stats_extra = {}
                 pass
 
             # Vẽ bounding boxes cực nhanh
@@ -179,8 +181,9 @@ def run_camera_detection(
             frame_len = frame.size
             _avg_brightness = monitor.process_frame(frame_ptr, frame_len)
 
-            # Lấy stats cached và tạo panel thống kê (Mượt 60hz)
+            # Lấy stats cached và merge với Rust timing breakdown
             stats = monitor.get_stats()
+            stats.update(stats_extra)
             stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT)
 
             # Ghép frame và stats panel

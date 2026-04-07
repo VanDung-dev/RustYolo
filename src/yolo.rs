@@ -11,6 +11,7 @@ use rayon::prelude::*;
 use arrow::array::{Array, Float32Array, Int32Array, StructArray};
 use arrow::datatypes::{DataType, Field, Fields};
 use std::sync::Arc;
+use std::time::Instant;
 
 #[pyclass]
 pub struct YoloDetection {
@@ -70,6 +71,9 @@ pub struct YoloV8Detector {
     conf_threshold: f32,
     iou_threshold: f32,
     num_classes: usize,
+    pub last_preprocess_ms: f64,
+    pub last_inference_ms: f64,
+    pub last_nms_ms: f64,
 }
 
 #[pymethods]
@@ -122,8 +126,18 @@ impl YoloV8Detector {
             conf_threshold,
             iou_threshold,
             num_classes,
+            last_preprocess_ms: 0.0,
+            last_inference_ms: 0.0,
+            last_nms_ms: 0.0,
         })
     }
+
+    #[getter]
+    fn preprocess_ms(&self) -> f64 { self.last_preprocess_ms }
+    #[getter]
+    fn inference_ms(&self) -> f64 { self.last_inference_ms }
+    #[getter]
+    fn nms_ms(&self) -> f64 { self.last_nms_ms }
 
     /// YOLO Inference returning Arrow Capsules (array, schema).
     fn detect_to_arrow<'py>(
@@ -143,7 +157,9 @@ impl YoloV8Detector {
         let raw_data = unsafe { 
             std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) 
         };
-        
+
+        // ⏱ Measure preprocessing time
+        let t_pre = Instant::now();
         let input_array = crate::image_proc::preprocess_image_kornia(
             raw_data,
             width,
@@ -151,6 +167,7 @@ impl YoloV8Detector {
             self.input_width,
             self.input_height,
         ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Preprocessing failed: {}", e)))?;
+        self.last_preprocess_ms = t_pre.elapsed().as_secs_f64() * 1000.0;
 
         let detections = self.run_inference_internal(py, input_array, (width, height))?;
         
@@ -251,12 +268,14 @@ impl YoloV8Detector {
             ))
         })?;
 
-        // Release the Python GIL during heavy ONNX execution so the UI thread can run at 60fps!
+        // ⏱ Measure ONNX inference time only
+        let t_infer = Instant::now();
         let outputs = py.detach(|| {
             self.session.run(ort::inputs![input_tensor])
         }).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Inference failed: {}", e))
         })?;
+        self.last_inference_ms = t_infer.elapsed().as_secs_f64() * 1000.0;
 
         let out_value = &outputs["output0"];
         let out_shape = out_value.try_extract_tensor::<f32>().map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?.0;
@@ -268,8 +287,10 @@ impl YoloV8Detector {
         
         let scale_x = orig_dim.0 as f32 / self.input_width as f32;
         let scale_y = orig_dim.1 as f32 / self.input_height as f32;
-
         let conf_threshold = self.conf_threshold;
+
+        // ⏱ Measure NMS + decode time
+        let t_nms = Instant::now();
         
         let boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> = (0..num_classes)
             .into_par_iter()
@@ -299,8 +320,8 @@ impl YoloV8Detector {
         let detections: Vec<YoloDetection> = boxes_by_class
             .into_par_iter()
             .enumerate()
-            .filter(|(_, boxes)| !boxes.is_empty())
-            .flat_map(|(class_id, mut boxes)| {
+            .filter(|(_, boxes): &(usize, Vec<(f32, f32, f32, f32, f32)>)| !boxes.is_empty())
+            .flat_map(|(class_id, mut boxes): (usize, Vec<(f32, f32, f32, f32, f32)>)| {
                 let mut class_detections = Vec::new();
                 boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
                 let mut keep = vec![true; boxes.len()];
@@ -326,6 +347,8 @@ impl YoloV8Detector {
                 class_detections
             })
             .collect();
+        
+        self.last_nms_ms = t_nms.elapsed().as_secs_f64() * 1000.0;
 
         Ok(detections)
     }
