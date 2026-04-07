@@ -94,6 +94,14 @@ impl YoloV8Detector {
             println!("🚀 CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng...");
         }
 
+        let use_ane = !model_path.to_lowercase().contains("yolo26") && !model_path.to_lowercase().contains("yolo10");
+        let compute_units = if use_ane {
+            ort::execution_providers::coreml::ComputeUnits::All
+        } else {
+            println!("💡 Model YOLOv2x/v10 phát hiện! Đang chuyển sang chế độ GPU+CPU (bỏ qua ANE lỗi) để đảm bảo ổn định...");
+            ort::execution_providers::coreml::ComputeUnits::CPUAndGPU
+        };
+
         let session = Session::builder()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Failed to create session builder: {}", e
@@ -101,7 +109,7 @@ impl YoloV8Detector {
             .with_execution_providers([
                 CoreML::default()
                     .with_subgraphs(true)
-                    .with_compute_units(ort::execution_providers::coreml::ComputeUnits::All)
+                    .with_compute_units(compute_units)
                     .build()
             ])
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
