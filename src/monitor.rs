@@ -16,7 +16,8 @@ pub struct PerformanceMonitor {
     thread_handle: Option<thread::JoinHandle<()>>,
 
     fps: f64,
-    latency: f64,
+    ai_latency: f64,
+    rust_latency: f64,
     frame_times: Vec<f64>,
 }
 
@@ -34,7 +35,8 @@ impl PerformanceMonitor {
             running: Arc::new(Mutex::new(false)),
             thread_handle: None,
             fps: 0.0,
-            latency: 0.0,
+            ai_latency: 0.0,
+            rust_latency: 0.0,
             frame_times: Vec::with_capacity(60),
         }
     }
@@ -67,9 +69,9 @@ impl PerformanceMonitor {
         }
     }
 
-    /// Cập nhật thời gian xử lý frame
+    /// Cập nhật thời gian xử lý AI
     pub fn update_frame_time(&mut self, latency_ms: f64) {
-        self.latency = latency_ms;
+        self.ai_latency = latency_ms;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -96,7 +98,7 @@ impl PerformanceMonitor {
             let avg = sum as f64 / length as f64;
 
             let latency = start.elapsed().as_secs_f64() * 1000.0;
-            self.update_frame_time(latency);
+            self.rust_latency = latency;
 
             Ok(avg)
         }
@@ -111,7 +113,10 @@ impl PerformanceMonitor {
         // Frame stats
         stats.set_item(pyo3::intern!(py, "fps"), self.fps).unwrap();
         stats
-            .set_item(pyo3::intern!(py, "latency"), self.latency)
+            .set_item(pyo3::intern!(py, "ai_latency"), self.ai_latency)
+            .unwrap();
+        stats
+            .set_item(pyo3::intern!(py, "rust_latency"), self.rust_latency)
             .unwrap();
 
         // CPU info
