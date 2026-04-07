@@ -330,86 +330,72 @@ impl YoloV8Detector {
         orig_dim: (usize, usize),
     ) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>)> {
         let input_tensor = Value::from_array(input_array).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to create input tensor: {}", e
-            ))
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Input tensor error: {}", e))
         })?;
 
-        // ✅ Inference ONNX Runtime (GIL released)
+        // 1. Chạy inference
         let t_infer = Instant::now();
-        let outputs = py.detach(|| {
-            self.session.run(ort::inputs![input_tensor])
-        }).map_err(|e| {
+        let outputs = py.detach(|| self.session.run(ort::inputs![input_tensor])).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Inference failed: {}", e))
         })?;
         self.last_inference_ms = t_infer.elapsed().as_secs_f64() * 1000.0;
 
-        // ── Đọc output0 ─────────────────────────────────────────────────────
-        let out_value = &outputs["output0"];
-        let out_extract = out_value.try_extract_tensor::<f32>()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?;
-        
+        // 2. Trích xuất toàn bộ dữ liệu cần thiết từ outputs NGAY LẬP TỨC
+        let out_extract = outputs["output0"].try_extract_tensor::<f32>().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e))
+        })?;
         let out_shape = out_extract.0.to_vec();
         let out_data = out_extract.1.to_vec();
 
-        // ── Đọc proto tensor (output1) sớm nếu có ─────────────────────
         let proto_flat: Option<Vec<f32>> = match outputs.get("output1") {
             Some(v) => {
-                let t = v.try_extract_tensor::<f32>()
-                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Proto error: {}", e)))?;
+                let t = v.try_extract_tensor::<f32>().map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Proto error: {}", e))
+                })?;
                 Some(t.1.to_vec())
             }
             None => None,
         };
 
-        // ✅ GIẢI PHÓNG MƯỢN TRÊN SELF SỚM NHẤT CÓ THỂ
+        // 3. Giải phóng SessionOutputs để có thể mượn mut self
         drop(outputs);
 
         let total_channels = out_shape[1] as usize;
         let ndim = out_shape.len();
 
         // ── Tự động phát hiện loại model ────────────────────────────────────
-        // Classification: output0 shape là [1, 1000] (2D)
+        
+        // Case: Classification [1, 1000]
         if ndim == 2 {
             self.is_cls_model = true;
             self.is_obb_model = false;
             self.num_classes = total_channels;
-            self.num_keypoints = 0;
-            self.num_mask_coeffs = 0;
-            
-            // Giải phóng outputs trước để tránh lỗi borrow checker
             let cls_results = self.decode_cls_output(&out_data, total_channels);
             return Ok((cls_results, None));
         }
 
-        // ── End-to-End (E2E) Model: output0 shape is [1, num_queries, channels] ──
-        // YOLOv10 / YOLOv26 NMS-Free format.
-        // Heuristic: channel count is in out_shape[2] and is small.
+        self.is_cls_model = false;
+
+        // Case: End-to-End (E2E) Model (YOLOv26/v10)
         if ndim == 3 && out_shape[2] < out_shape[1] && out_shape[2] < 100 {
             let num_queries = out_shape[1] as usize;
             let channels = out_shape[2] as usize;
             let scale_x = orig_dim.0 as f32 / self.input_width as f32;
             let scale_y = orig_dim.1 as f32 / self.input_height as f32;
             
-            // Tự động nhận diện loại model E2E
-            let (num_keypoints, num_mask_coeffs) = if channels == 57 {
-                (17_usize, 0_usize)
-            } else if channels == 38 {
-                (0_usize, 32_usize)
-            } else {
-                (0_usize, 0_usize)
-            };
+            let (nk, nm) = if channels == 57 { (17, 0) } 
+                           else if channels == 38 { (0, 32) } 
+                           else { (0, 0) };
             
-            self.num_keypoints = num_keypoints;
-            self.num_mask_coeffs = num_mask_coeffs;
+            self.num_keypoints = nk;
+            self.num_mask_coeffs = nm;
+            self.last_nms_ms = 0.0;
 
             let mut detections = Vec::with_capacity(32);
             for i in 0..num_queries {
                 let base = i * channels;
                 let score = out_data[base + 4];
-                if score < self.conf_threshold {
-                    continue;
-                }
+                if score < self.conf_threshold { continue; }
                 
                 let x1 = out_data[base + 0] * scale_x;
                 let y1 = out_data[base + 1] * scale_y;
@@ -417,39 +403,28 @@ impl YoloV8Detector {
                 let y2 = out_data[base + 3] * scale_y;
                 let class_id = out_data[base + 5] as i32;
                 
-                let mut keypoints = Vec::with_capacity(num_keypoints);
-                if num_keypoints > 0 {
-                    for k in 0..num_keypoints {
+                let mut keypoints = Vec::with_capacity(nk);
+                if nk > 0 {
+                    for k in 0..nk {
                         let k_off = base + 6 + k * 3;
-                        keypoints.push((
-                            out_data[k_off] * scale_x,
-                            out_data[k_off + 1] * scale_y,
-                            out_data[k_off + 2]
-                        ));
+                        keypoints.push((out_data[k_off] * scale_x, out_data[k_off + 1] * scale_y, out_data[k_off + 2]));
                     }
                 }
 
-                let mut mask_coeffs = Vec::with_capacity(num_mask_coeffs);
-                if num_mask_coeffs > 0 {
-                    for m in 0..num_mask_coeffs {
+                let mut mask_coeffs = Vec::with_capacity(nm);
+                if nm > 0 {
+                    for m in 0..nm {
                         mask_coeffs.push(out_data[base + 6 + m]);
                     }
                 }
 
                 detections.push(YoloDetection {
-                    class_id,
-                    confidence: score,
-                    x: x1,
-                    y: y1,
-                    width: x2 - x1,
-                    height: y2 - y1,
-                    keypoints,
-                    mask_coeffs,
+                    class_id, confidence: score,
+                    x: x1, y: y1, width: x2 - x1, height: y2 - y1,
+                    keypoints, mask_coeffs,
                 });
             }
-            
-            self.last_nms_ms = 0.0;
-            return Ok((detections, None));
+            return Ok((detections, proto_flat));
         }
 
         self.is_cls_model = false;
