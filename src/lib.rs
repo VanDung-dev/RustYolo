@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 mod monitor;
 mod yolo;
 mod ffi;
+pub mod image_proc;
 
 pub use monitor::PerformanceMonitor;
 pub use yolo::{YoloDetection, YoloV8Detector};

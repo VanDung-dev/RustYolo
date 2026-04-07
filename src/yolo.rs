@@ -6,9 +6,9 @@ use ort::execution_providers::{CoreML, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyBytes, PyCapsule};
+use pyo3::types::{PyList, PyCapsule};
 use rayon::prelude::*;
-use arrow::array::{Array, ArrayData, Float32Array, Int32Array, StructArray};
+use arrow::array::{Array, Float32Array, Int32Array, StructArray};
 use arrow::datatypes::{DataType, Field, Fields};
 use std::sync::Arc;
 
@@ -91,14 +91,6 @@ impl YoloV8Detector {
                     e
                 ))
             })?
-            .with_intra_threads(1)
-            .map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to set intra threads: {}", e))
-            })?
-            .with_inter_threads(1)
-            .map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to set inter threads: {}", e))
-            })?
             .with_execution_providers([
                 CoreML::default()
                     .with_subgraphs(true)
@@ -152,18 +144,13 @@ impl YoloV8Detector {
             std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) 
         };
         
-        let mut input_array = Array4::<f32>::zeros((1, 3, self.input_height, self.input_width));
-        let input_h = self.input_height;
-        let input_w = self.input_width;
-
-        input_array.as_slice_mut().unwrap().par_chunks_exact_mut(input_h * input_w).enumerate().for_each(|(c, channel_data)| {
-            for y in 0..input_h {
-                for x in 0..input_w {
-                    let offset = (y * width + x) * 3 + c;
-                    channel_data[y * input_w + x] = raw_data[offset] as f32 / 255.0;
-                }
-            }
-        });
+        let input_array = crate::image_proc::preprocess_image_kornia(
+            raw_data,
+            width,
+            height,
+            self.input_width,
+            self.input_height,
+        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Preprocessing failed: {}", e)))?;
 
         let detections = self.run_inference_internal(py, input_array, (width, height))?;
         
@@ -217,18 +204,13 @@ impl YoloV8Detector {
             std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) 
         };
         
-        let mut input_array = Array4::<f32>::zeros((1, 3, self.input_height, self.input_width));
-        let input_h = self.input_height;
-        let input_w = self.input_width;
-
-        input_array.as_slice_mut().unwrap().par_chunks_exact_mut(input_h * input_w).enumerate().for_each(|(c, channel_data)| {
-            for y in 0..input_h {
-                for x in 0..input_w {
-                    let offset = (y * width + x) * 3 + c;
-                    channel_data[y * input_w + x] = raw_data[offset] as f32 / 255.0;
-                }
-            }
-        });
+        let input_array = crate::image_proc::preprocess_image_kornia(
+            raw_data,
+            width,
+            height,
+            self.input_width,
+            self.input_height,
+        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Preprocessing failed: {}", e)))?;
 
         let detections = self.run_inference_internal(py, input_array, (width, height))?;
 

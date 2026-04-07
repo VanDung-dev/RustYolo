@@ -25,6 +25,9 @@ ort = { version = "2.0.0-rc.12", features = ["coreml"] }
 ndarray = "0.17"
 image = "0.25"
 rayon = "1.10"
+kornia = "0.1"
+kornia-image = "0.1"
+kornia-imgproc = "0.1"
 
 [lib]
 name = "rust_yolo"

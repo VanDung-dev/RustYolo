@@ -6,7 +6,6 @@ use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use pyo3::ffi::{PyCapsule_GetPointer, PyCapsule_New};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
-use std::ffi::CString;
 
 /// Export an Arrow ArrayData to a pair of Python Capsules.
 /// Static names for PyCapsules as required by PyArrow C Data Interface
