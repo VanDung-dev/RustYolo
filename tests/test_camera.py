@@ -1,8 +1,11 @@
+"""
+Kiểm tra cơ chế xử lý dữ liệu giữa python và rust
+"""
+
 import cv2
 import time
 import threading
 import queue
-import pyarrow as pa
 from rust_yolo import YoloV8Detector, PerformanceMonitor
 
 # COCO labels for YOLOv8 (80 classes)

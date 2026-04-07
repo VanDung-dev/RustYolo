@@ -26,9 +26,14 @@ def test_yolov8n():
     input_size = detector.get_input_size()
     print(f"Input size: {input_size}")
     
-    test_image = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
+    # ✅ Tạo ảnh test có nội dung thực tế để phát hiện object
+    test_image = np.zeros((640, 640, 3), dtype=np.uint8)
+    # Vẽ hình chữ nhật giả lập người
+    cv2.rectangle(test_image, (100, 100), (300, 500), (128, 128, 128), -1)
+    # Vẽ đầu người
+    cv2.circle(test_image, (200, 70), 40, (180, 180, 180), -1)
     
-    print("Đang test với ảnh ngẫu nhiên...")
+    print("Đang test với ảnh mẫu test...")
     detections = detector.detect_from_numpy(test_image)
     print(f"Số object phát hiện: {len(detections)}")
     
