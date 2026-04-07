@@ -26,7 +26,6 @@ STATS_CACHE_TTL = 0.5  # giây
 # Cấu hình YOLO
 # Model hỗ trợ: yolov8n.onnx | yolov8n-pose.onnx | yolov8n-seg.onnx
 DEFAULT_CONFIDENCE = 0.5
-DEFAULT_MODEL = "yolov8n.onnx"
 DEFAULT_CAMERA_ID = 0
 
 # Màu sắc UI

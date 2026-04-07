@@ -170,7 +170,7 @@ maturin develop --release
 
 ### 4. Chạy demo camera
 ```bash
-python main.py
+python main.py --model yolov8x.onnx
 ```
 
 ---
