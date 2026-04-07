@@ -57,6 +57,18 @@ COCO_CLASSES = [
     "scissors", "teddy bear", "hair drier", "toothbrush",
 ]
 
+# ImageNet class names (1000 classes) - Dùng cho YOLOv8-cls
+def _load_imagenet_classes() -> list:
+    import os
+    path = os.path.join(os.path.dirname(__file__), "imagenet_classes.txt")
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return [line.strip() for line in f.readlines()]
+    return ["class_" + str(i) for i in range(1000)]  # Fallback
+
+IMAGENET_CLASSES = _load_imagenet_classes()
+
+
 # Segmentation: palette màu 80 class COCO (BGR)
 # Tạo từ HSV cách đều nhau để tránh trùng màu giữa các class
 def _gen_seg_palette(n: int) -> list:

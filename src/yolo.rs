@@ -71,8 +71,13 @@ pub struct YoloV8Detector {
     num_classes: usize,
     num_keypoints: usize,
     num_mask_coeffs: usize,
+    #[pyo3(get)]
+    pub is_cls_model: bool,
+    #[pyo3(get)]
     pub last_preprocess_ms: f64,
+    #[pyo3(get)]
     pub last_inference_ms: f64,
+    #[pyo3(get)]
     pub last_nms_ms: f64,
 }
 
@@ -106,7 +111,7 @@ impl YoloV8Detector {
                 "Failed to load model from {}: {}", model_path, e
             )))?;
 
-        Ok(YoloV8Detector {
+        Ok(Self {
             session,
             input_width: 640,
             input_height: 640,
@@ -115,11 +120,13 @@ impl YoloV8Detector {
             num_classes: 80,
             num_keypoints: 0,
             num_mask_coeffs: 0,
+            is_cls_model: false,
             last_preprocess_ms: 0.0,
             last_inference_ms: 0.0,
             last_nms_ms: 0.0,
         })
     }
+
 
     #[getter]
     fn preprocess_ms(&self) -> f64 { self.last_preprocess_ms }
@@ -327,16 +334,45 @@ impl YoloV8Detector {
         self.last_inference_ms = t_infer.elapsed().as_secs_f64() * 1000.0;
 
         // ── Đọc output0 ─────────────────────────────────────────────────────
-        let out_value  = &outputs["output0"];
-        let out_shape  = out_value.try_extract_tensor::<f32>()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?.0;
-        let out_data   = out_value.try_extract_tensor::<f32>()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?.1;
+        let out_value = &outputs["output0"];
+        let out_extract = out_value.try_extract_tensor::<f32>()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?;
+        
+        let out_shape = out_extract.0.to_vec();
+        let out_data = out_extract.1.to_vec();
+
+        // ── Đọc proto tensor (output1) sớm nếu có ─────────────────────
+        let proto_flat: Option<Vec<f32>> = match outputs.get("output1") {
+            Some(v) => {
+                let t = v.try_extract_tensor::<f32>()
+                    .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Proto error: {}", e)))?;
+                Some(t.1.to_vec())
+            }
+            None => None,
+        };
+
+        // ✅ GIẢI PHÓNG MƯỢN TRÊN SELF SỚM NHẤT CÓ THỂ
+        drop(outputs);
 
         let total_channels = out_shape[1] as usize;
-        let num_anchors    = out_shape[2] as usize;
+        let ndim = out_shape.len();
 
         // ── Tự động phát hiện loại model ────────────────────────────────────
+        // Classification: output0 shape là [1, 1000] (2D)
+        if ndim == 2 {
+            self.is_cls_model = true;
+            self.num_classes = total_channels;
+            self.num_keypoints = 0;
+            self.num_mask_coeffs = 0;
+            
+            let cls_results = self.decode_cls_output(&out_data, total_channels);
+            return Ok((cls_results, None));
+        }
+
+
+        self.is_cls_model = false;
+        let num_anchors = out_shape[2] as usize;
+
         // Pose: total_channels == 56  (4 + 1 + 17*3)
         // Seg:  total_channels == 116 (4 + 80 + 32)
         // Det:  total_channels == 84  (4 + 80)
@@ -354,22 +390,6 @@ impl YoloV8Detector {
         self.num_classes     = num_classes;
         self.num_keypoints   = num_keypoints;
         self.num_mask_coeffs = num_mask_coeffs;
-
-        // ── Đọc proto tensor (output1) nếu là seg model ─────────────────────
-        let proto_flat: Option<Vec<f32>> = if num_mask_coeffs > 0 {
-            match outputs.get("output1") {
-                Some(proto_value) => {
-                    let proto_tensor = proto_value.try_extract_tensor::<f32>()
-                        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                            format!("Proto extract error: {}", e)
-                        ))?;
-                    Some(proto_tensor.1.to_vec())
-                }
-                None => None,
-            }
-        } else {
-            None
-        };
 
         let scale_x = orig_dim.0 as f32 / self.input_width as f32;
         let scale_y = orig_dim.1 as f32 / self.input_height as f32;
@@ -500,5 +520,36 @@ impl YoloV8Detector {
         let union  = area1 + area2 - intersection;
 
         if union == 0.0 { 0.0 } else { intersection / union }
+    }
+
+    /// Decode classification output: Softmax + Top-K
+    fn decode_cls_output(&self, out_data: &[f32], _num_classes: usize) -> Vec<YoloDetection> {
+
+        // 1. Softmax (numerically stable)
+        let max_val = out_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let exps: Vec<f32> = out_data.iter().map(|x| (x - max_val).exp()).collect();
+        let sum: f32 = exps.iter().sum();
+        let probs: Vec<f32> = exps.iter().map(|x| x / sum).collect();
+
+        // 2. Lấy Top-5 classes
+        let mut indexed: Vec<(usize, f32)> = probs.iter().enumerate()
+            .map(|(i, &p)| (i, p)).collect();
+        
+        // Sắp xếp giảm dần theo xác suất
+        indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        // 3. Trả về top 5 detections (không có box)
+        indexed.into_iter().take(5).map(|(idx, prob)| {
+            YoloDetection {
+                class_id: idx as i32,
+                confidence: prob,
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+                keypoints: vec![],
+                mask_coeffs: vec![],
+            }
+        }).collect()
     }
 }

@@ -24,7 +24,9 @@ from apps.config import (
     SKELETON_EDGES,
     KP_COLORS,
     POSE_KP_CONF,
+    IMAGENET_CLASSES,
 )
+
 
 
 class YoloDetector:
@@ -40,7 +42,9 @@ class YoloDetector:
         self.input_w = 640
         self.input_h = 640
         self.is_pose_model = "-pose" in model_name.lower()
-        self.is_seg_model  = "-seg"  in model_name.lower()
+        self.is_seg_model = "-seg" in model_name.lower()
+        self.is_cls_model = "-cls" in model_name.lower()
+
 
         # Proto tensor cache (cập nhật mỗi frame, dùng trong annotate_frame)
         self._proto: np.ndarray | None = None
@@ -103,7 +107,11 @@ class YoloDetector:
         annotated = frame.copy()
         h, w = frame.shape[:2]
 
-        # Segmentation masks vẽ trước (để bbox/label hiển thị trên mask)
+        # ── Classification Model (Vẽ panel riêng, không có bbox) ───────────────
+        if self.is_cls_model:
+            return self._draw_classification_overlay(annotated, results)
+
+        # ── Segmentation masks (vẽ trước để bbox/label ở trên) ───────────────
         if self.is_seg_model and self._proto is not None:
             annotated = self._draw_seg_masks(annotated, results, h, w)
 
@@ -128,9 +136,9 @@ class YoloDetector:
             if self.is_pose_model:
                 label = f"Person: {conf:.2f}"
             else:
-                idx = det["class_id"]
-                name = COCO_CLASSES[idx] if 0 <= idx < len(COCO_CLASSES) else "?"
-                label = f"{name}: {conf:.2f}"
+                class_id = det["class_id"]
+                label = f"{COCO_CLASSES[class_id]}" if class_id < len(COCO_CLASSES) else f"ID:{class_id}"
+            label = f"{label} {conf:.2f}"
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             (tw, th), bl = cv2.getTextSize(label, font, 0.55, 1)
@@ -250,6 +258,65 @@ class YoloDetector:
             pt = (int(kx), int(ky))
             color = KP_COLORS[i] if i < len(KP_COLORS) else (0, 255, 0)
             cv2.circle(annotated, pt, 5, (255, 255, 255), -1, cv2.LINE_AA)
-            cv2.circle(annotated, pt, 3, color, -1, cv2.LINE_AA)
+            cv2.circle(annotated, pt, 3, color,           -1, cv2.LINE_AA)
 
+        return annotated
+
+    def _draw_classification_overlay(self, annotated: np.ndarray, results: list) -> np.ndarray:
+        """Vẽ panel hiển thị Top-5 classification."""
+        if not results:
+            return annotated
+
+        h, w = annotated.shape[:2]
+        
+        # Tạo semi-transparent overlay ở góc trái trên
+        panel_w = 400
+        panel_h = 30 + (len(results) * 35)
+        
+        overlay = annotated.copy()
+        cv2.rectangle(overlay, (10, 10), (panel_w, panel_h), (0, 0, 0), -1)
+        # Alpha blending
+        cv2.addWeighted(overlay, 0.6, annotated, 0.4, 0, annotated)
+        
+        # Tiêu đề
+        cv2.putText(annotated, "🏆 Top Classification:", (20, 45), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+        
+        # Hiển thị từng class
+        for i, det in enumerate(results):
+            class_id = det["class_id"]
+            conf = det["confidence"]
+            
+            # Lấy tên từ IMAGENET_CLASSES
+            if 0 <= class_id < len(IMAGENET_CLASSES):
+                label = IMAGENET_CLASSES[class_id]
+            else:
+                label = f"Unknown ({class_id})"
+                
+            y_pos = 85 + (i * 35)
+            
+            # Vẽ số thứ tự
+            cv2.putText(annotated, f"#{i+1}", (25, y_pos), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1, cv2.LINE_AA)
+            
+            # Vẽ tên class
+            cv2.putText(annotated, f"{label[:25]}", (70, y_pos), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+            
+            # Vẽ confidence bar
+            bar_start_x = 240
+            bar_max_w = 120
+            bar_w = int(conf * bar_max_w)
+            
+            # Bar background
+            cv2.rectangle(annotated, (bar_start_x, y_pos - 12), 
+                         (bar_start_x + bar_max_w, y_pos + 2), (50, 50, 50), -1)
+            # Bar fill
+            cv2.rectangle(annotated, (bar_start_x, y_pos - 12), 
+                         (bar_start_x + bar_w, y_pos + 2), (0, 255, 0), -1)
+            
+            # % text
+            cv2.putText(annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+            
         return annotated
