@@ -51,10 +51,14 @@ def create_stats_panel(
 
     # FPS
     fps = stats.get("fps", 0.0)
-    fps_color = COLORS["green"] if fps > 20 else COLORS["yellow"] if fps > 10 else COLORS["red"]
+    fps_color = (
+        COLORS["green"] if fps > 20
+        else COLORS["yellow"] if fps > 10
+        else COLORS["red"]
+    )
     cv2.putText(
         panel,
-        f"FPS:",
+        "FPS:",
         (15, y_offset),
         font,
         font_scale,
@@ -72,12 +76,16 @@ def create_stats_panel(
     )
     y_offset += line_height
 
-    # Latency
-    latency = stats.get("latency", 0.0)
-    latency_color = COLORS["green"] if latency < 50 else COLORS["yellow"] if latency < 100 else COLORS["red"]
+    # AI Latency
+    ai_latency = stats.get("ai_latency", 0.0)
+    ai_latency_color = (
+        COLORS["green"] if ai_latency < 50
+        else COLORS["yellow"] if ai_latency < 100
+        else COLORS["red"]
+    )
     cv2.putText(
         panel,
-        f"Latency:",
+        "AI Latency:",
         (15, y_offset),
         font,
         font_scale,
@@ -86,11 +94,34 @@ def create_stats_panel(
     )
     cv2.putText(
         panel,
-        f"{latency:.1f} ms",
-        (200, y_offset),
+        f"{ai_latency:.1f} ms",
+        (201, y_offset),
         font,
         font_scale,
-        latency_color,
+        ai_latency_color,
+        2,
+    )
+    y_offset += line_height
+
+    # Rust Latency
+    rust_latency = stats.get("rust_latency", 0.0)
+    rust_color = COLORS["cyan"] if rust_latency < 2 else COLORS["yellow"]
+    cv2.putText(
+        panel,
+        "Rust Latency:",
+        (15, y_offset),
+        font,
+        font_scale,
+        COLORS["white"],
+        2,
+    )
+    cv2.putText(
+        panel,
+        f"{rust_latency:.2f} ms",
+        (201, y_offset),
+        font,
+        font_scale,
+        rust_color,
         2,
     )
     y_offset += line_height
@@ -246,14 +277,18 @@ def create_stats_panel(
     # CPU Temperature
     cpu_temp = stats.get("cpu_temp", 0.0)
     if cpu_temp > 0:
-        cpu_temp_color = COLORS["green"] if cpu_temp < 60 else COLORS["yellow"] if cpu_temp < 80 else COLORS["red"]
+        cpu_temp_color = (
+            COLORS["green"] if cpu_temp < 60
+            else COLORS["yellow"] if cpu_temp < 80
+            else COLORS["red"]
+        )
         cv2.putText(
             panel,
             f"Temp: {cpu_temp:.1f}°C",
             (15, y_offset),
             font,
             font_scale,
-            COLORS["white"],
+            cpu_temp_color,
             2,
         )
     else:
