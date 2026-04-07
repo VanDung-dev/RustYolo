@@ -16,6 +16,11 @@ def export_yolov8_interactive():
     print("3. YOLOv8m (Medium)- [Độ chính xác tốt]")
     print("4. YOLOv8l (Large) - [Chậm, Độ chính xác cao]")
     print("5. YOLOv8x (X-Large)- [Chậm nhất, Đỉnh nhất]")
+    print("6. YOLOv8n-pose     - [Pose Estimation Nano]")
+    print("7. YOLOv8s-pose     - [Pose Estimation Small]")
+    print("8. YOLOv8m-pose     - [Pose Estimation Medium]")
+    print("9. YOLOv8l-pose     - [Pose Estimation Large]")
+    print("10. YOLOv8x-pose    - [Pose Estimation X-Large]")
     
     choice = input("\nNhập số (1-5) hoặc tên model (vd: yolov8n): ").strip().lower()
     
@@ -25,11 +30,21 @@ def export_yolov8_interactive():
         "3": "yolov8m",
         "4": "yolov8l",
         "5": "yolov8x",
+        "6": "yolov8n-pose",
+        "7": "yolov8s-pose",
+        "8": "yolov8m-pose",
+        "9": "yolov8l-pose",
+        "10": "yolov8x-pose",
         "yolov8n": "yolov8n",
         "yolov8s": "yolov8s",
         "yolov8m": "yolov8m",
         "yolov8l": "yolov8l",
-        "yolov8x": "yolov8x"
+        "yolov8x": "yolov8x",
+        "yolov8n-pose": "yolov8n-pose",
+        "yolov8s-pose": "yolov8s-pose",
+        "yolov8m-pose": "yolov8m-pose",
+        "yolov8l-pose": "yolov8l-pose",
+        "yolov8x-pose": "yolov8x-pose"
     }
     
     model_base = model_map.get(choice)
