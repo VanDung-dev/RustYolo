@@ -374,17 +374,30 @@ impl YoloV8Detector {
             return Ok((cls_results, None));
         }
 
-        // ── End-to-End (E2E) Model: output0 shape is [1, 300, 6] ────────────
-        // YOLOv10 / YOLOv26 NMS-Free format: [batch, num_queries, 6]
-        // 6 values: [x1, y1, x2, y2, score, class_id]
-        if ndim == 3 && out_shape[2] == 6 {
+        // ── End-to-End (E2E) Model: output0 shape is [1, num_queries, channels] ──
+        // YOLOv10 / YOLOv26 NMS-Free format.
+        // Heuristic: channel count is in out_shape[2] and is small.
+        if ndim == 3 && out_shape[2] < out_shape[1] && out_shape[2] < 100 {
             let num_queries = out_shape[1] as usize;
+            let channels = out_shape[2] as usize;
             let scale_x = orig_dim.0 as f32 / self.input_width as f32;
             let scale_y = orig_dim.1 as f32 / self.input_height as f32;
             
+            // Tự động nhận diện loại model E2E
+            let (num_keypoints, num_mask_coeffs) = if channels == 57 {
+                (17_usize, 0_usize)
+            } else if channels == 38 {
+                (0_usize, 32_usize)
+            } else {
+                (0_usize, 0_usize)
+            };
+            
+            self.num_keypoints = num_keypoints;
+            self.num_mask_coeffs = num_mask_coeffs;
+
             let mut detections = Vec::with_capacity(32);
             for i in 0..num_queries {
-                let base = i * 6;
+                let base = i * channels;
                 let score = out_data[base + 4];
                 if score < self.conf_threshold {
                     continue;
@@ -396,6 +409,25 @@ impl YoloV8Detector {
                 let y2 = out_data[base + 3] * scale_y;
                 let class_id = out_data[base + 5] as i32;
                 
+                let mut keypoints = Vec::with_capacity(num_keypoints);
+                if num_keypoints > 0 {
+                    for k in 0..num_keypoints {
+                        let k_off = base + 6 + k * 3;
+                        keypoints.push((
+                            out_data[k_off] * scale_x,
+                            out_data[k_off + 1] * scale_y,
+                            out_data[k_off + 2]
+                        ));
+                    }
+                }
+
+                let mut mask_coeffs = Vec::with_capacity(num_mask_coeffs);
+                if num_mask_coeffs > 0 {
+                    for m in 0..num_mask_coeffs {
+                        mask_coeffs.push(out_data[base + 6 + m]);
+                    }
+                }
+
                 detections.push(YoloDetection {
                     class_id,
                     confidence: score,
@@ -403,12 +435,12 @@ impl YoloV8Detector {
                     y: y1,
                     width: x2 - x1,
                     height: y2 - y1,
-                    keypoints: vec![],
-                    mask_coeffs: vec![],
+                    keypoints,
+                    mask_coeffs,
                 });
             }
             
-            self.last_nms_ms = 0.0; // E2E models are NMS-free
+            self.last_nms_ms = 0.0;
             return Ok((detections, None));
         }
 
