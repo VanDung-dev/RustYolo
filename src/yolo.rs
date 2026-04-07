@@ -292,61 +292,65 @@ impl YoloV8Detector {
         // ⏱ Measure NMS + decode time
         let t_nms = Instant::now();
         
-        let boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> = (0..num_classes)
-            .into_par_iter()
-            .map(|c| {
-                let mut class_boxes = Vec::new();
-                for i in 0..num_anchors {
-                    let conf = out_data[(4 + c) * num_anchors + i];
-                    if conf > conf_threshold {
-                        let cx = out_data[i];
-                        let cy = out_data[num_anchors + i];
-                        let w = out_data[2 * num_anchors + i];
-                        let h = out_data[3 * num_anchors + i];
-
-                        let x = (cx - w / 2.0) * scale_x;
-                        let y = (cy - h / 2.0) * scale_y;
-                        let width = w * scale_x;
-                        let height = h * scale_y;
-                        class_boxes.push((x, y, width, height, conf));
-                    }
+        // ✅ Optimized decode: single pass filter only valid boxes first
+        let mut all_boxes = Vec::with_capacity(128);
+        
+        // Single iteration over all anchors
+        for i in 0..num_anchors {
+            // Find max confidence class for this anchor
+            let mut max_conf = 0.0f32;
+            let mut max_class = 0usize;
+            
+            for c in 0..num_classes {
+                let conf = out_data[(4 + c) * num_anchors + i];
+                if conf > max_conf {
+                    max_conf = conf;
+                    max_class = c;
                 }
-                class_boxes
-            })
-            .collect();
+            }
+            
+            if max_conf > conf_threshold {
+                let cx = out_data[i];
+                let cy = out_data[num_anchors + i];
+                let w = out_data[2 * num_anchors + i];
+                let h = out_data[3 * num_anchors + i];
+
+                let x = (cx - w / 2.0) * scale_x;
+                let y = (cy - h / 2.0) * scale_y;
+                let width = w * scale_x;
+                let height = h * scale_y;
+                
+                all_boxes.push((x, y, width, height, max_conf, max_class));
+            }
+        }
         
         let iou_threshold = self.iou_threshold;
+        
+        // Sort all boxes descending by confidence
+        all_boxes.sort_unstable_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
+        
+        let mut keep = vec![true; all_boxes.len()];
+        let mut detections = Vec::with_capacity(all_boxes.len());
 
-        let detections: Vec<YoloDetection> = boxes_by_class
-            .into_par_iter()
-            .enumerate()
-            .filter(|(_, boxes): &(usize, Vec<(f32, f32, f32, f32, f32)>)| !boxes.is_empty())
-            .flat_map(|(class_id, mut boxes): (usize, Vec<(f32, f32, f32, f32, f32)>)| {
-                let mut class_detections = Vec::new();
-                boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
-                let mut keep = vec![true; boxes.len()];
+        // Fast single pass NMS
+        for i in 0..all_boxes.len() {
+            if !keep[i] { continue; }
+            
+            let (x, y, w, h, conf, class_id) = all_boxes[i];
+            detections.push(YoloDetection {
+                class_id: class_id as i32,
+                confidence: conf,
+                x, y, width: w, height: h,
+            });
 
-                for i in 0..boxes.len() {
-                    if !keep[i] { continue; }
-                    for j in (i + 1)..boxes.len() {
-                        if !keep[j] { continue; }
-                        let iou = Self::compute_iou_internal(&boxes[i], &boxes[j]);
-                        if iou > iou_threshold { keep[j] = false; }
-                    }
+            // Suppress overlapping boxes
+            for j in (i + 1)..all_boxes.len() {
+                if !keep[j] || all_boxes[j].5 != class_id { continue; }
+                if Self::compute_iou_internal(&all_boxes[i], &all_boxes[j]) > iou_threshold {
+                    keep[j] = false;
                 }
-
-                for (idx, &(x, y, w, h, conf)) in boxes.iter().enumerate() {
-                    if keep[idx] {
-                        class_detections.push(YoloDetection {
-                            class_id: class_id as i32,
-                            confidence: conf,
-                            x, y, width: w, height: h,
-                        });
-                    }
-                }
-                class_detections
-            })
-            .collect();
+            }
+        }
         
         self.last_nms_ms = t_nms.elapsed().as_secs_f64() * 1000.0;
 
@@ -354,8 +358,8 @@ impl YoloV8Detector {
     }
 
     fn compute_iou_internal(
-        box1: &(f32, f32, f32, f32, f32),
-        box2: &(f32, f32, f32, f32, f32),
+        box1: &(f32, f32, f32, f32, f32, usize),
+        box2: &(f32, f32, f32, f32, f32, usize),
     ) -> f32 {
         let x1 = box1.0.max(box2.0);
         let y1 = box1.1.max(box2.1);
