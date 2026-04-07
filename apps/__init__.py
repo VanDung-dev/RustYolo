@@ -9,7 +9,6 @@ from .config import (
     STATS_PANEL_WIDTH,
     STATS_PANEL_HEIGHT,
     DEFAULT_CONFIDENCE,
-    DEFAULT_MODEL,
     DEFAULT_CAMERA_ID,
     COLORS,
 )
@@ -23,7 +22,6 @@ __all__ = [
     "STATS_PANEL_WIDTH",
     "STATS_PANEL_HEIGHT",
     "DEFAULT_CONFIDENCE",
-    "DEFAULT_MODEL",
     "DEFAULT_CAMERA_ID",
     "COLORS",
     "YoloDetector",

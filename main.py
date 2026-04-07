@@ -3,12 +3,16 @@ YOLOv8 Object Detection với Camera và hiển thị thông số hiệu năng
 Main entry point - File chạy chính (Đã tối ưu High-Performance Multi-threading)
 """
 
-import cv2
-import numpy as np
+import os
 import sys
 import time
 import threading
 import queue
+import logging
+import argparse
+
+import cv2
+import numpy as np
 
 # Import từ package apps
 from apps.config import (
@@ -17,12 +21,19 @@ from apps.config import (
     STATS_PANEL_WIDTH,
     STATS_PANEL_HEIGHT,
     DEFAULT_CONFIDENCE,
-    DEFAULT_MODEL,
     DEFAULT_CAMERA_ID,
 )
 from apps.detector import YoloDetector
 from apps.performance_monitor import PerformanceMonitor
 from apps.ui_panel import create_stats_panel
+
+# Cấu hình logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 
 class VideoStream:
     """Threaded video capture stream to handle I/O without blocking"""
@@ -65,10 +76,9 @@ class VideoStream:
         self.stopped = True
         self.stream.release()
 
+
 def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
     """Luồng worker nền để xử lý YOLO inference với Adaptive Thermal Control"""
-    consecutive_hot_frames = 0
-    
     while not stop_event.is_set():
         try:
             # 1. Kiểm tra trạng thái nhiệt độ (Thermal Awareness)
@@ -77,12 +87,11 @@ def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
             dt_dt = stats.get("dt_dt", 0.0)
             
             # Chiến lược điều tiết nhiệt (Adaptive Scheduling)
-            # Nếu nhiệt độ > 85 độ hoặc đang tăng quá nhanh (>0.5 deg/sec)
             thermal_delay = 0
             if temp > 82.0 or dt_dt > 0.4:
                 thermal_delay = 0.01  # 10ms delay to cool down
             if temp > 88.0:
-                thermal_delay = 0.03  # 30ms delay (Slowing down to save hardware)
+                thermal_delay = 0.03  # 30ms delay
             
             if thermal_delay > 0:
                 time.sleep(thermal_delay)
@@ -96,10 +105,12 @@ def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
             results, timing = detector.detect_frame(frame)
             detect_time = (time.perf_counter() - detect_start) * 1000  # ms
 
-            # Đẩy kết quả + thời gian xử lý (bao gồm breakdown) xuống queue
+            # Đẩy kết quả + thời gian xử l vào queue
             if result_queue.full():
-                try: result_queue.get_nowait()
-                except queue.Empty: pass
+                try: 
+                    result_queue.get_nowait()
+                except queue.Empty: 
+                    pass
 
             result_queue.put((results, detect_time, timing))
             frame_queue.task_done()
@@ -107,23 +118,31 @@ def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
         except queue.Empty:
             continue
         except Exception as e:
-            print(f"Lỗi AI Worker: {e}")
+            logger.error(f"Lỗi AI Worker: {e}")
+
 
 def run_camera_detection(
-    model_name: str = DEFAULT_MODEL,
+    model_name: str,
     camera_id: int = DEFAULT_CAMERA_ID,
     confidence_threshold: float = DEFAULT_CONFIDENCE,
 ):
-    print(f"Đang load model {model_name}...")
+    # Kiểm tra sự tồn tại của file model
+    if not os.path.exists(model_name):
+        logger.error(f"❌ Không tìm thấy file model: {model_name}")
+        print(f"\n❌ LỖI: Không tìm thấy file model '{model_name}'")
+        print("Vui lòng kiểm tra lại đường dẫn hoặc chạy script export_onnx_for_rust.py trước.\n")
+        sys.exit(1)
+
+    logger.info(f"🚀 Đang load model {model_name}...")
     detector = YoloDetector(model_name, confidence_threshold)
-    print("Model đã được load thành công!")
+    logger.info("✅ Model đã được load thành công!")
 
     # Khởi động luồng Camera siêu tốc
     stream = VideoStream(src=camera_id, width=CAMERA_WIDTH, height=CAMERA_HEIGHT).start()
     time.sleep(1.0) # Đợi camera warm up
 
     if stream.frame is None:
-        print(f"Không thể mở camera với ID {camera_id}")
+        logger.error(f"Không thể mở camera với ID {camera_id}")
         sys.exit(1)
 
     # Queue giao tiếp Multi-threading
@@ -143,9 +162,8 @@ def run_camera_detection(
     )
     ai_worker.start()
 
-    print(f"Đang quét (Gối đầu)... Nhấn 'q' để thoát.")
-    print(f"Cửa sổ: {CAMERA_WIDTH + STATS_PANEL_WIDTH}x{CAMERA_HEIGHT}")
-
+    logger.info(f"Đang quét... Nhấn 'q' để thoát.")
+    
     current_results = []
     
     try:
@@ -154,24 +172,22 @@ def run_camera_detection(
             if not ret or frame is None:
                 continue
 
-            # Đo đạc FPS phần cứng hiển thị (Chỉ xử lý resize frame 1 lần)
+            # Xử lý resize frame nếu cần
             h, w = frame.shape[:2]
             if h != CAMERA_HEIGHT or w != CAMERA_WIDTH:
                 frame = cv2.resize(frame, (CAMERA_WIDTH, CAMERA_HEIGHT))
 
-            # Gắn frame vào hàng đợi cho AI (Chỉ gửi nếu AI đang rảnh tay)
+            # Gắn frame vào hàng đợi cho AI
             if frame_queue.empty():
                 frame_queue.put(frame)
 
-            # Lấy kết quả AI mới nhất không block UI
+            # Lấy kết quả AI mới nhất
             try:
                 current_results, detect_time, rust_timing = result_queue.get_nowait()
                 monitor.update_frame_time(detect_time)
-                # Merge Rust timing breakdown vào stats để UI hiển thị
                 stats_extra = rust_timing
             except queue.Empty:
                 stats_extra = {}
-                pass
 
             # Vẽ bounding boxes cực nhanh
             annotated_frame = detector.annotate_frame(frame, current_results)
@@ -179,9 +195,9 @@ def run_camera_detection(
             # Gửi buffer frame sang Rust xử lý zero-copy
             frame_ptr = frame.__array_interface__['data'][0]
             frame_len = frame.size
-            _avg_brightness = monitor.process_frame(frame_ptr, frame_len)
+            monitor.process_frame(frame_ptr, frame_len)
 
-            # Lấy stats cached và merge với Rust timing breakdown
+            # Lấy stats cached và hiển thị panel
             stats = monitor.get_stats()
             stats.update(stats_extra)
             stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT)
@@ -200,17 +216,33 @@ def run_camera_detection(
         monitor.stop_background_monitor()
         stream.stop()
         cv2.destroyAllWindows()
-        print("Đã đóng camera.")
+        logger.info("Đã đóng ứng dụng.")
+
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="YOLOv8 Object Detection với Camera và Performance Monitor")
-    parser.add_argument("--model", type=str, default=DEFAULT_MODEL, help="Tên model YOLOv8")
-    parser.add_argument("--camera", type=int, default=DEFAULT_CAMERA_ID, help="ID của camera")
-    parser.add_argument("--conf", type=float, default=DEFAULT_CONFIDENCE, help="Ngưỡng confidence cho detection")
+    parser = argparse.ArgumentParser(
+        description="YOLOv8 Object Detection với Camera và Performance Monitor"
+    )
+    parser.add_argument(
+        "--model", type=str, required=True, 
+        help="Đường dẫn đến file model YOLOv8 (ví dụ: yolov8n.onnx)"
+    )
+    parser.add_argument(
+        "--camera", type=int, default=DEFAULT_CAMERA_ID, 
+        help="ID của camera (mặc định 0)"
+    )
+    parser.add_argument(
+        "--conf", type=float, default=DEFAULT_CONFIDENCE, 
+        help="Ngưỡng confidence (mặc định 0.5)"
+    )
     args = parser.parse_args()
     
-    run_camera_detection(model_name=args.model, camera_id=args.camera, confidence_threshold=args.conf)
+    run_camera_detection(
+        model_name=args.model, 
+        camera_id=args.camera, 
+        confidence_threshold=args.conf
+    )
+
 
 if __name__ == "__main__":
     main()
