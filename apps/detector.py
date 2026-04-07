@@ -43,14 +43,11 @@ class YoloDetector:
     def detect_frame(self, frame: np.ndarray) -> List[dict]:
         """
         Chạy detection trên 1 frame với Apache Arrow (Zero-copy Results).
+        Quá trình Resize tối ưu (SIMD) được xử lý bên trong Rust bằng Kornia.
         """
-        # Resize mượt bằng OpenCV
-        frame_resized = cv2.resize(frame, (self.input_w, self.input_h))
-
-        # Inference Zero-copy bằng Rust + Apache Arrow
-        # detect_to_arrow trả về tuple (array_capsule, schema_capsule)
+        # Trực tiếp truyền raw frame sang Kornia (Rust)
         try:
-            array_capsule, schema_capsule = self.detector.detect_to_arrow(frame_resized)
+            array_capsule, schema_capsule = self.detector.detect_to_arrow(frame)
             
             # Reconstruct using PyArrow from capsules (Zero-copy)
             results_arrow = pa.Array._import_from_c_capsule(schema_capsule, array_capsule)
@@ -80,11 +77,11 @@ class YoloDetector:
             class_id = det['class_id']
             conf = det['confidence']
 
-            # Map tọa độ về tỷ lệ frame gốc
-            x1 = int(det['x'] * w / self.input_w)
-            y1 = int(det['y'] * h / self.input_h)
-            x2 = int((det['x'] + det['w']) * w / self.input_w)
-            y2 = int((det['y'] + det['h']) * h / self.input_h)
+            # Tọa độ từ Rust (Kornia) đã được trả về theo tỷ lệ frame gốc
+            x1 = int(det['x'])
+            y1 = int(det['y'])
+            x2 = int(det['x'] + det['w'])
+            y2 = int(det['y'] + det['h'])
 
             # Giới hạn tọa độ
             x1, y1 = max(0, x1), max(0, y1)
