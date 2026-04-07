@@ -36,3 +36,75 @@ COLORS = {
     "gray": (150, 150, 150),
     "dark_gray": (60, 60, 60),
 }
+
+COCO_CLASSES = [
+    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
+    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
+    "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
+    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
+    "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
+    "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
+    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+    "couch", "potted plant", "bed", "dining table", "toilet", "tv",
+    "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
+    "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
+    "scissors", "teddy bear", "hair drier", "toothbrush"
+]
+
+# ─── Bảng màu skeleton theo nhóm cơ thể (BGR) ────────────────────────────────
+# Chuẩn COCO 17 keypoints:
+# 0=mũi  1=mắt_T  2=mắt_P  3=tai_T  4=tai_P
+# 5=vai_T  6=vai_P  7=khuỷu_T  8=khuỷu_P
+# 9=cổ_tay_T  10=cổ_tay_P  11=hông_T  12=hông_P
+# 13=đầu_gối_T  14=đầu_gối_P  15=mắt_cá_T  16=mắt_cá_P
+SKELETON_EDGES = [
+    # (kp_a, kp_b, color_BGR)
+    # Đầu
+    (0,  1,  (  0, 215, 255)),   # mũi - mắt trái     | vàng gold
+    (0,  2,  (  0, 215, 255)),   # mũi - mắt phải     | vàng gold
+    (1,  3,  (147, 112, 219)),   # mắt trái - tai trái | tím medium
+    (2,  4,  (147, 112, 219)),   # mắt phải - tai phải | tím medium
+    # Thân
+    (5,  6,  ( 50, 205,  50)),   # vai trái - vai phải  | xanh lá
+    (5, 11,  ( 50, 205,  50)),   # vai trái - hông trái | xanh lá
+    (6, 12,  ( 50, 205,  50)),   # vai phải - hông phải | xanh lá
+    (11, 12, ( 50, 205,  50)),   # hông trái - hông phải| xanh lá
+    # Tay trái
+    (5,  7,  (  0, 165, 255)),   # vai trái - khuỷu trái   | cam
+    (7,  9,  (  0, 165, 255)),   # khuỷu trái - cổ tay trái | cam
+    # Tay phải
+    (6,  8,  (  0,  69, 255)),   # vai phải - khuỷu phải   | cam đỏ
+    (8, 10,  (  0,  69, 255)),   # khuỷu phải - cổ tay phải | cam đỏ
+    # Chân trái
+    (11, 13, (255, 144,  30)),   # hông trái - đầu gối trái  | xanh dương
+    (13, 15, (255, 144,  30)),   # đầu gối trái - mắt cá trái | xanh dương
+    # Chân phải
+    (12, 14, (238, 130, 238)),   # hông phải - đầu gối phải  | tím
+    (14, 16, (238, 130, 238)),   # đầu gối phải - mắt cá phải | tím
+]
+
+# ─── Màu từng keypoint theo nhóm (BGR) ───────────────────────────────────────
+KP_COLORS = [
+    (  0, 215, 255),  # 0  mũi           | vàng gold
+    (147, 112, 219),  # 1  mắt trái       | tím medium
+    (147, 112, 219),  # 2  mắt phải       | tím medium
+    (147, 112, 219),  # 3  tai trái       | tím medium
+    (147, 112, 219),  # 4  tai phải       | tím medium
+    (  0, 165, 255),  # 5  vai trái       | cam
+    (  0,  69, 255),  # 6  vai phải       | cam đỏ
+    (  0, 165, 255),  # 7  khuỷu trái     | cam
+    (  0,  69, 255),  # 8  khuỷu phải     | cam đỏ
+    (  0, 165, 255),  # 9  cổ tay trái    | cam
+    (  0,  69, 255),  # 10 cổ tay phải    | cam đỏ
+    (255, 144,  30),  # 11 hông trái      | xanh dương sáng
+    (238, 130, 238),  # 12 hông phải      | tím hồng
+    (255, 144,  30),  # 13 đầu gối trái   | xanh dương sáng
+    (238, 130, 238),  # 14 đầu gối phải   | tím hồng
+    (255, 144,  30),  # 15 mắt cá trái    | xanh dương sáng
+    (238, 130, 238),  # 16 mắt cá phải    | tím hồng
+]
+
+# Ngưỡng confidence để hiện keypoint (thấp hơn → skeleton đầy đủ hơn)
+POSE_KP_CONF = 0.3
