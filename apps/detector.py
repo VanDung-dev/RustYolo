@@ -1,11 +1,19 @@
 """
-Module YOLOv8 Object Detector (Rust Engine API)
+✅ Module YOLOv8 Object Detector - Giao tiếp với Rust Engine
+
+Kiến trúc:
+- File này là WRAPPER Python không chứa logic tính toán
+- Toàn bộ inference, preprocess, NMS chạy 100% trên Rust
+- Truyền dữ liệu Zero Copy qua Apache Arrow C Data Interface
+- Không có copy dữ liệu frame giữa Python <> Rust
 """
 
 import cv2
 import numpy as np
 import pyarrow as pa
-# Import engine phân tích từ CoreML/Rust siêu tối ưu!
+
+# ✅ Import trực tiếp Native Rust Engine đã biên dịch
+# Class này được export từ src/yolo.rs thông qua PyO3 binding
 from rust_yolo import YoloV8Detector
 
 COCO_CLASSES = [
@@ -41,8 +49,21 @@ class YoloDetector:
 
     def detect_frame(self, frame: np.ndarray) -> tuple:
         """
-        Chạy detection trên 1 frame với Apache Arrow (Zero-copy Results).
-        Trả về (results, timing_dict) để hiển thị breakdown latency chi tiết.
+        ✅ Chạy detection AI trên 1 frame
+        
+        Kiến trúc Zero Copy:
+        1. Frame numpy từ OpenCV được truyền CON TRỎ trực tiếp sang Rust
+        2. Rust thực hiện toàn bộ preprocess, inference, NMS
+        3. Kết quả trả về dưới dạng Apache Arrow C Capsule
+        4. Python import lại trực tiếp không sao chép dữ liệu
+        
+        Args:
+            frame: Ảnh từ camera OpenCV định dạng HWC uint8
+            
+        Returns:
+            (results: list[dict], timing: dict)
+            - results: Danh sách các object đã detect
+            - timing: Breakdown latency từng giai đoạn từ Rust
         """
         try:
             array_capsule, schema_capsule = self.detector.detect_to_arrow(frame)
@@ -65,7 +86,8 @@ class YoloDetector:
             print(f"Lỗi Arrow: {e}")
             return [], {}
 
-    def annotate_frame(self, frame: np.ndarray, results: list[dict]) -> np.ndarray:
+    @staticmethod
+    def annotate_frame(frame: np.ndarray, results: list[dict]) -> np.ndarray:
         """
         Vẽ kết quả detection lên frame gốc bằng OpenCV tốc độ cao.
         """

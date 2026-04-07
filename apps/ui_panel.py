@@ -1,5 +1,11 @@
 """
-Module tạo giao diện panel thống kê hiệu năng
+✅ Module vẽ UI Panel Thống kê Hiệu năng
+
+Module này chỉ chịu trách nhiệm VẼ hình ảnh, không tính toán gì cả:
+- Nhận dictionary stats đã được tính toán hoàn toàn từ Rust
+- Vẽ text, thanh progress, màu sắc lên mảng numpy
+- Render bằng OpenCV tốc độ cao
+- Tất cả logic tính toán đã được hoàn thành trước đó
 """
 
 import cv2
