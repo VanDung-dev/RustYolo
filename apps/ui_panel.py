@@ -158,7 +158,11 @@ def create_stats_panel(
 
     # GPU Load với progress bar
     gpu_load = gpu_info.get("load", 0.0)
-    gpu_load_color = COLORS["green"] if gpu_load < 50 else COLORS["yellow"] if gpu_load < 80 else COLORS["red"]
+    gpu_load_color = (
+        COLORS["green"] if gpu_load < 50 
+        else COLORS["yellow"] if gpu_load < 80 
+        else COLORS["red"]
+    )
     cv2.putText(
         panel,
         f"Load: {gpu_load:.1f}%",
@@ -215,9 +219,11 @@ def create_stats_panel(
     y_offset += line_height
 
     # GPU Memory
+    mem_used_gpu = gpu_info.get('memory_used', 'N/A')
+    mem_total_gpu = gpu_info.get('memory_total', 'N/A')
     cv2.putText(
         panel,
-        f"Memory: {gpu_info.get('memory_used', 'N/A')} / {gpu_info.get('memory_total', 'N/A')}",
+        f"Memory: {mem_used_gpu} / {mem_total_gpu}",
         (15, y_offset),
         font,
         font_scale,
@@ -244,7 +250,11 @@ def create_stats_panel(
 
     # CPU Usage
     cpu_usage = stats.get("cpu_usage", 0.0)
-    cpu_usage_color = COLORS["green"] if cpu_usage < 50 else COLORS["yellow"] if cpu_usage < 80 else COLORS["red"]
+    cpu_usage_color = (
+        COLORS["green"] if cpu_usage < 50 
+        else COLORS["yellow"] if cpu_usage < 80 
+        else COLORS["red"]
+    )
     cv2.putText(
         panel,
         f"Usage: {cpu_usage:.1f}%",
@@ -276,6 +286,8 @@ def create_stats_panel(
 
     # CPU Temperature
     cpu_temp = stats.get("cpu_temp", 0.0)
+    dt_dt = stats.get("dt_dt", 0.0)
+    
     if cpu_temp > 0:
         cpu_temp_color = (
             COLORS["green"] if cpu_temp < 60
@@ -289,6 +301,22 @@ def create_stats_panel(
             font,
             font_scale,
             cpu_temp_color,
+            2,
+        )
+        
+        # Thêm Thermal Gradient (dT/dt)
+        dt_color = (
+            COLORS["white"] if abs(dt_dt) < 0.1 
+            else COLORS["yellow"] if dt_dt < 0.5 
+            else COLORS["red"]
+        )
+        cv2.putText(
+            panel,
+            f"dT/dt: {dt_dt:+.2f} °C/s",
+            (250, y_offset),
+            font,
+            font_scale - 0.1,
+            dt_color,
             2,
         )
     else:

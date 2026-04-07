@@ -65,11 +65,29 @@ class VideoStream:
         self.stopped = True
         self.stream.release()
 
-def ai_worker_thread(detector, frame_queue, result_queue, stop_event):
-    """Luồng worker nền để xử lý YOLO inference không khóa camera"""
+def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
+    """Luồng worker nền để xử lý YOLO inference với Adaptive Thermal Control"""
+    consecutive_hot_frames = 0
+    
     while not stop_event.is_set():
         try:
-            # Lấy ảnh mới nhất ra xử lý
+            # 1. Kiểm tra trạng thái nhiệt độ (Thermal Awareness)
+            stats = monitor.get_stats()
+            temp = stats.get("cpu_temp", 0.0)
+            dt_dt = stats.get("dt_dt", 0.0)
+            
+            # Chiến lược điều tiết nhiệt (Adaptive Scheduling)
+            # Nếu nhiệt độ > 85 độ hoặc đang tăng quá nhanh (>0.5 deg/sec)
+            thermal_delay = 0
+            if temp > 82.0 or dt_dt > 0.4:
+                thermal_delay = 0.01  # 10ms delay to cool down
+            if temp > 88.0:
+                thermal_delay = 0.03  # 30ms delay (Slowing down to save hardware)
+            
+            if thermal_delay > 0:
+                time.sleep(thermal_delay)
+
+            # 2. Lấy ảnh mới nhất ra xử lý
             frame = frame_queue.get(timeout=0.1)
             if frame is None:
                 continue
@@ -80,7 +98,7 @@ def ai_worker_thread(detector, frame_queue, result_queue, stop_event):
             
             # Đẩy kết quả + thời gian xử lý xuống queue
             if result_queue.full():
-                try: result_queue.get_nowait() # Vứt kết quả cũ chưa kịp vẽ
+                try: result_queue.get_nowait()
                 except queue.Empty: pass
                 
             result_queue.put((results, detect_time))
@@ -113,17 +131,17 @@ def run_camera_detection(
     result_queue = queue.Queue(maxsize=1)
     stop_event = threading.Event()
 
-    # Khởi động luồng AI Inference
-    ai_worker = threading.Thread(
-        target=ai_worker_thread, 
-        args=(detector, frame_queue, result_queue, stop_event),
-        daemon=True
-    )
-    ai_worker.start()
-
     # Tạo performance monitor và chạy background thread
     monitor = PerformanceMonitor()
     monitor.start_background_monitor()
+
+    # Khởi động luồng AI Inference
+    ai_worker = threading.Thread(
+        target=ai_worker_thread, 
+        args=(detector, frame_queue, result_queue, monitor, stop_event),
+        daemon=True
+    )
+    ai_worker.start()
 
     print(f"Đang quét (Gối đầu)... Nhấn 'q' để thoát.")
     print(f"Cửa sổ: {CAMERA_WIDTH + STATS_PANEL_WIDTH}x{CAMERA_HEIGHT}")

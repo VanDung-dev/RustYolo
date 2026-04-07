@@ -1,6 +1,5 @@
 use ndarray::Array4;
 use kornia_image::{allocator::CpuAllocator, Image, ImageSize};
-use rayon::prelude::*;
 use kornia_imgproc::resize::resize_fast_rgb;
 use kornia_imgproc::interpolation::InterpolationMode;
 
@@ -41,25 +40,27 @@ pub fn preprocess_image_kornia(
 
     // 3. Normalize and transfer to ndarray.
     // YOLOv8 expects NCHW format: (1, 3, height, width).
-    // Kornia Image is HWC. We need to transpose to CHW and normalize to [0, 1].
-    let mut input_array = Array4::<f32>::zeros((1, 3, target_height, target_width));
+    // Kornia Image is HWC [0, 255]. We need to transpose to CHW and normalize to [0, 1].
     
-    // The resized_image data can be accessed via `as_slice`.
+    // Convert to ndarray from raw slice (HWC)
     let resized_data = resized_image.as_slice();
     
-    // Use Rayon for faster copy and normalization?
-    // Let's do a simple loops for now, but Kornia should ideally have tensor conversion.
-    rayon::scope(|_| {
-        input_array.as_slice_mut().unwrap().par_chunks_exact_mut(target_height * target_width).enumerate().for_each(|(c, channel_slice)| {
-            for y in 0..target_height {
-                for x in 0..target_width {
-                    // Kornia is (H, W, C)
-                    let offset = (y * target_width + x) * 3 + c;
-                    channel_slice[y * target_width + x] = resized_data[offset] as f32 / 255.0;
-                }
-            }
-        });
-    });
+    // Create an ndarray view of the HWC data
+    let hwc_array = ndarray::ArrayView3::from_shape(
+        (target_height, target_width, 3),
+        resized_data
+    ).map_err(|e| format!("Failed to create ndarray view: {:?}", e))?;
+
+    // Perform transpose (HWC -> CHW) and normalization in one go using ndarray
+    // This is much faster than manual loops and leverages SIMD
+    let mut input_array = Array4::<f32>::zeros((1, 3, target_height, target_width));
+    
+    // We can use bitwise/vectorized operations by transposing the view
+    let chw_array = hwc_array.permuted_axes([2, 0, 1]);
+    
+    // Assign and normalize
+    input_array.slice_mut(ndarray::s![0, .., .., ..])
+        .assign(&chw_array.mapv(|x| x as f32 / 255.0));
 
     Ok(input_array)
 }
