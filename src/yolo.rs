@@ -1,16 +1,16 @@
 //! Rust extension module cho macOS system monitoring và YOLOv8x inference
-//!
+//! Với tối ưu hóa Rayon (đa luồng) và Apache Arrow (Zero-copy)
 
 use ndarray::Array4;
 use ort::execution_providers::{CoreML, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyBytes};
+use pyo3::types::{PyList, PyBytes, PyCapsule};
 use rayon::prelude::*;
-use arrow::pyarrow::PyArrowType;
-use arrow::array::ArrayData;
-use arrow::array::Float32Array;
+use arrow::array::{Array, ArrayData, Float32Array, Int32Array, StructArray};
+use arrow::datatypes::{DataType, Field, Fields};
+use std::sync::Arc;
 
 #[pyclass]
 pub struct YoloDetection {
@@ -77,6 +77,7 @@ impl YoloV8Detector {
     #[new]
     #[pyo3(signature = (model_path, conf_threshold=0.25, iou_threshold=0.45))]
     fn new(model_path: &str, conf_threshold: f32, iou_threshold: f32) -> PyResult<Self> {
+        println!("DEB: YoloV8Detector::new called with model: {}", model_path);
         if !CoreML::default().is_available().unwrap_or(false) {
             println!("⚠️ CẢNH BÁO: CoreML không khả dụng trên thiết bị này. Đang lùi về CPU.");
         } else {
@@ -120,11 +121,7 @@ impl YoloV8Detector {
 
         let input_width = 640;
         let input_height = 640;
-        
-        if let Some(_input) = session.inputs().get(0) {}
-        
         let num_classes = 80;
-
 
         Ok(YoloV8Detector {
             session,
@@ -136,50 +133,70 @@ impl YoloV8Detector {
         })
     }
 
-    fn detect_from_arrow(
+    /// YOLO Inference returning Arrow Capsules (array, schema).
+    fn detect_to_arrow<'py>(
         &mut self,
-        py: Python,
-        arrow_array: PyArrowType<ArrayData>,
-    ) -> PyResult<Py<PyList>> {
-        let array_data = arrow_array.0;
-        
-        let float_array = Float32Array::from(array_data);
-        let data = float_array.values();
-        
-        let input_array = ndarray::ArrayView4::from_shape(
-            (1, 3, self.input_height, self.input_width),
-            data
-        ).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid array shape: {}", e))
-        })?;
+        py: Python<'py>,
+        numpy_array: &Bound<'py, pyo3::PyAny>,
+    ) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>)> {
+        let shape_obj = numpy_array.getattr("shape")?;
+        let shape: (usize, usize, usize) = shape_obj.extract()?;
+        let (height, width, _channels) = shape;
 
-        let input_owned = input_array.to_owned();
-        self.run_inference(py, input_owned, (self.input_width, self.input_height))
-    }
-
-    /// TỐI ƯU CAO: Nhận trực tiếp mảng bytes (u8) từ Python và chuẩn hóa song song bằng SIMD/Rayon.
-    fn detect_from_bytes(
-        &mut self,
-        py: Python,
-        bytes: &Bound<PyBytes>,
-        width: usize,
-        height: usize,
-    ) -> PyResult<Py<PyList>> {
-        let data = bytes.as_bytes();
-        if data.len() != width * height * 3 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Kích thước dữ liệu không khớp: mong đợi {}, có {}",
-                width * height * 3,
-                data.len()
-            )));
-        }
+        let data_ptr = numpy_array
+            .getattr("ctypes")?
+            .getattr("data")?
+            .extract::<usize>()?;
         
-        let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
-            let offset = (y as usize * width + x as usize) * 3 + c;
-            data[offset] as f32 / 255.0
+        let raw_data = unsafe { 
+            std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) 
+        };
+        
+        let mut input_array = Array4::<f32>::zeros((1, 3, self.input_height, self.input_width));
+        let input_h = self.input_height;
+        let input_w = self.input_width;
+
+        input_array.as_slice_mut().unwrap().par_chunks_exact_mut(input_h * input_w).enumerate().for_each(|(c, channel_data)| {
+            for y in 0..input_h {
+                for x in 0..input_w {
+                    let offset = (y * width + x) * 3 + c;
+                    channel_data[y * input_w + x] = raw_data[offset] as f32 / 255.0;
+                }
+            }
         });
 
-        self.run_inference(py, input_array, (width, height))
+        let detections = self.run_inference_internal(py, input_array, (width, height))?;
+        
+        let class_ids = Int32Array::from(detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
+        let confidences = Float32Array::from(detections.iter().map(|d| d.confidence).collect::<Vec<_>>());
+        let boxes_x = Float32Array::from(detections.iter().map(|d| d.x).collect::<Vec<_>>());
+        let boxes_y = Float32Array::from(detections.iter().map(|d| d.y).collect::<Vec<_>>());
+        let boxes_w = Float32Array::from(detections.iter().map(|d| d.width).collect::<Vec<_>>());
+        let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
+
+        let fields = vec![
+            Field::new("class_id", DataType::Int32, false),
+            Field::new("confidence", DataType::Float32, false),
+            Field::new("x", DataType::Float32, false),
+            Field::new("y", DataType::Float32, false),
+            Field::new("w", DataType::Float32, false),
+            Field::new("h", DataType::Float32, false),
+        ];
+
+        let struct_array = StructArray::try_new(
+            Fields::from(fields),
+            vec![
+                Arc::new(class_ids),
+                Arc::new(confidences),
+                Arc::new(boxes_x),
+                Arc::new(boxes_y),
+                Arc::new(boxes_w),
+                Arc::new(boxes_h),
+            ],
+            None,
+        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e)))?;
+
+        crate::ffi::export_to_python(py, struct_array.to_data())
     }
 
     fn detect_from_numpy(
@@ -200,36 +217,28 @@ impl YoloV8Detector {
             std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) 
         };
         
-        let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
-            let offset = (y as usize * width + x as usize) * 3 + c;
-            raw_data[offset] as f32 / 255.0
+        let mut input_array = Array4::<f32>::zeros((1, 3, self.input_height, self.input_width));
+        let input_h = self.input_height;
+        let input_w = self.input_width;
+
+        input_array.as_slice_mut().unwrap().par_chunks_exact_mut(input_h * input_w).enumerate().for_each(|(c, channel_data)| {
+            for y in 0..input_h {
+                for x in 0..input_w {
+                    let offset = (y * width + x) * 3 + c;
+                    channel_data[y * input_w + x] = raw_data[offset] as f32 / 255.0;
+                }
+            }
         });
 
-        self.run_inference(py, input_array, (width, height))
-    }
+        let detections = self.run_inference_internal(py, input_array, (width, height))?;
 
-    fn detect_image_bytes(
-        &mut self,
-        py: Python,
-        data: Vec<u8>,
-        width: usize,
-        height: usize,
-    ) -> PyResult<Py<PyList>> {
-        if data.len() != width * height * 3 {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                "Invalid data size: expected {} bytes, got {}",
-                width * height * 3,
-                data.len()
-            )));
+        let py_list = PyList::empty(py);
+        for det in detections {
+            let py_det = Py::new(py, det)?;
+            py_list.append(py_det)?;
         }
 
-        let img = image::DynamicImage::ImageRgb8(
-            image::ImageBuffer::from_raw(width as u32, height as u32, data).ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>("Failed to create image buffer")
-            })?,
-        );
-
-        self.detect_image(py, img)
+        Ok(py_list.into())
     }
 
     fn get_input_size(&self) -> (usize, usize) {
@@ -245,135 +254,14 @@ impl YoloV8Detector {
     }
 }
 
+/// Internal methods for YoloV8Detector
 impl YoloV8Detector {
-    fn detect_image(&mut self, py: Python, img: image::DynamicImage) -> PyResult<Py<PyList>> {
-        let resized = img.resize_exact(
-            self.input_width as u32,
-            self.input_height as u32,
-            image::imageops::FilterType::Triangle,
-        );
-
-        let rgb = resized.to_rgb8();
-        let (img_width, img_height) = (img.width(), img.height());
-        
-        let rgb_raw = rgb.as_raw();
-        let input_array = Array4::from_shape_fn((1, 3, self.input_height, self.input_width), |(_, c, y, x)| {
-            let offset = (y as usize * self.input_width + x as usize) * 3 + c;
-            rgb_raw[offset] as f32 / 255.0
-        });
-
-        let input_tensor = Value::from_array(input_array).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Failed to create input tensor: {}",
-                e
-            ))
-        })?;
-
-        let outputs = self.session.run(ort::inputs![input_tensor]).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Inference failed: {}", e))
-        })?;
-
-        let (_out_shape, out_data) =
-            outputs["output0"]
-                .try_extract_tensor::<f32>()
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to extract output: {}",
-                        e
-                    ))
-                })?;
-
-        let out_shape = outputs["output0"].try_extract_tensor::<f32>()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to extract: {}", e)))?.0;
-        
-        let num_classes = (out_shape[1] - 4) as usize;
-        let num_anchors = out_shape[2] as usize;
-        self.num_classes = num_classes; // Update self for future matching
-
-        let out_data: Vec<f32> = out_data.to_vec();
-        drop(outputs);
-
-        let scale_x = img_width as f32 / self.input_width as f32;
-        let scale_y = img_height as f32 / self.input_height as f32;
-
-        let mut boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> =
-            vec![Vec::new(); num_classes];
-
-        for i in 0..num_anchors {
-            let mut max_conf = 0.0f32;
-            let mut max_class = 0usize;
-
-            for c in 0..num_classes {
-                let raw_score = out_data[(4 + c) * num_anchors + i];
-                let conf = raw_score; 
-                
-                if conf > max_conf {
-                    max_conf = conf;
-                    max_class = c;
-                }
-            }
-
-            if max_conf > self.conf_threshold {
-                let cx = out_data[i];
-                let cy = out_data[num_anchors + i];
-                let w = out_data[2 * num_anchors + i];
-                let h = out_data[3 * num_anchors + i];
-
-                let x = (cx - w / 2.0) * scale_x;
-                let y = (cy - h / 2.0) * scale_y;
-                let width = w * scale_x;
-                let height = h * scale_y;
-
-                boxes_by_class[max_class].push((x, y, width, height, max_conf));
-            }
-        }
-        
-        let detections: Vec<YoloDetection> = boxes_by_class
-            .into_par_iter()
-            .enumerate()
-            .filter(|(_, boxes)| !boxes.is_empty())
-            .flat_map(|(class_id, mut boxes)| {
-                let mut class_detections = Vec::new();
-                boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
-                let mut keep = vec![true; boxes.len()];
-
-                for i in 0..boxes.len() {
-                    if !keep[i] { continue; }
-                    for j in (i + 1)..boxes.len() {
-                        if !keep[j] { continue; }
-                        let iou = self.compute_iou_internal(&boxes[i], &boxes[j]);
-                        if iou > self.iou_threshold { keep[j] = false; }
-                    }
-                }
-
-                for (idx, &(x, y, w, h, conf)) in boxes.iter().enumerate() {
-                    if keep[idx] {
-                        class_detections.push(YoloDetection {
-                            class_id: class_id as i32,
-                            confidence: conf,
-                            x, y, width: w, height: h,
-                        });
-                    }
-                }
-                class_detections
-            })
-            .collect();
-
-        let py_list = PyList::empty(py);
-        for det in detections {
-            let py_det = Py::new(py, det)?;
-            py_list.append(py_det)?;
-        }
-
-        Ok(py_list.into())
-    }
-
-    fn run_inference(
+    fn run_inference_internal(
         &mut self,
         py: Python,
         input_array: Array4<f32>,
         orig_dim: (usize, usize)
-    ) -> PyResult<Py<PyList>> {
+    ) -> PyResult<Vec<YoloDetection>> {
         let input_tensor = Value::from_array(input_array).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Failed to create input tensor: {}",
@@ -381,72 +269,57 @@ impl YoloV8Detector {
             ))
         })?;
 
-        let outputs = self.session.run(ort::inputs![input_tensor]).map_err(|e| {
+        // Release the Python GIL during heavy ONNX execution so the UI thread can run at 60fps!
+        let outputs = py.detach(|| {
+            self.session.run(ort::inputs![input_tensor])
+        }).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Inference failed: {}", e))
         })?;
 
-        let (_out_shape, out_data) =
-            outputs["output0"]
-                .try_extract_tensor::<f32>()
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                        "Failed to extract output: {}",
-                        e
-                    ))
-                })?;
-
-        let out_shape = outputs["output0"].try_extract_tensor::<f32>()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Failed to extract: {}", e)))?.0;
+        let out_value = &outputs["output0"];
+        let out_shape = out_value.try_extract_tensor::<f32>().map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?.0;
+        let out_data = out_value.try_extract_tensor::<f32>().map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?.1;
         
         let num_classes = (out_shape[1] - 4) as usize;
         let num_anchors = out_shape[2] as usize;
-        self.num_classes = num_classes; // Update self
-
-        let out_data: Vec<f32> = out_data.to_vec();
-        drop(outputs);
-
+        self.num_classes = num_classes;
+        
         let scale_x = orig_dim.0 as f32 / self.input_width as f32;
         let scale_y = orig_dim.1 as f32 / self.input_height as f32;
 
-        let mut boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> =
-            vec![Vec::new(); num_classes];
-
-        for i in 0..num_anchors {
-            let mut max_conf = 0.0f32;
-            let mut max_class = 0usize;
-
-            for c in 0..num_classes {
-                let raw_score = out_data[(4 + c) * num_anchors + i];
-                let conf = raw_score; 
-                if conf > max_conf {
-                    max_conf = conf;
-                    max_class = c;
-                }
-            }
-
-            if max_conf > self.conf_threshold {
-                let cx = out_data[i];
-                let cy = out_data[num_anchors + i];
-                let w = out_data[2 * num_anchors + i];
-                let h = out_data[3 * num_anchors + i];
-
-                let x = (cx - w / 2.0) * scale_x;
-                let y = (cy - h / 2.0) * scale_y;
-                let width = w * scale_x;
-                let height = h * scale_y;
-
-                boxes_by_class[max_class].push((x, y, width, height, max_conf));
-            }
-        }
+        let conf_threshold = self.conf_threshold;
         
+        let boxes_by_class: Vec<Vec<(f32, f32, f32, f32, f32)>> = (0..num_classes)
+            .into_par_iter()
+            .map(|c| {
+                let mut class_boxes = Vec::new();
+                for i in 0..num_anchors {
+                    let conf = out_data[(4 + c) * num_anchors + i];
+                    if conf > conf_threshold {
+                        let cx = out_data[i];
+                        let cy = out_data[num_anchors + i];
+                        let w = out_data[2 * num_anchors + i];
+                        let h = out_data[3 * num_anchors + i];
+
+                        let x = (cx - w / 2.0) * scale_x;
+                        let y = (cy - h / 2.0) * scale_y;
+                        let width = w * scale_x;
+                        let height = h * scale_y;
+                        class_boxes.push((x, y, width, height, conf));
+                    }
+                }
+                class_boxes
+            })
+            .collect();
+        
+        let iou_threshold = self.iou_threshold;
+
         let detections: Vec<YoloDetection> = boxes_by_class
             .into_par_iter()
             .enumerate()
             .filter(|(_, boxes)| !boxes.is_empty())
             .flat_map(|(class_id, mut boxes)| {
                 let mut class_detections = Vec::new();
-                
-                // NMS nội bộ trong class
                 boxes.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
                 let mut keep = vec![true; boxes.len()];
 
@@ -454,8 +327,8 @@ impl YoloV8Detector {
                     if !keep[i] { continue; }
                     for j in (i + 1)..boxes.len() {
                         if !keep[j] { continue; }
-                        let iou = self.compute_iou_internal(&boxes[i], &boxes[j]);
-                        if iou > self.iou_threshold { keep[j] = false; }
+                        let iou = Self::compute_iou_internal(&boxes[i], &boxes[j]);
+                        if iou > iou_threshold { keep[j] = false; }
                     }
                 }
 
@@ -472,17 +345,10 @@ impl YoloV8Detector {
             })
             .collect();
 
-        let py_list = PyList::empty(py);
-        for det in detections {
-            let py_det = Py::new(py, det)?;
-            py_list.append(py_det)?;
-        }
-
-        Ok(py_list.into())
+        Ok(detections)
     }
 
     fn compute_iou_internal(
-        &self,
         box1: &(f32, f32, f32, f32, f32),
         box2: &(f32, f32, f32, f32, f32),
     ) -> f32 {
