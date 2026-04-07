@@ -35,7 +35,8 @@ def test_performance_monitor():
     stats = monitor.get_stats()
     
     print(f"FPS: {stats['fps']}")
-    print(f"Latency: {stats['latency']:.2f} ms")
+    print(f"AI Latency: {stats['ai_latency']:.2f} ms")
+    print(f"Rust Latency: {stats['rust_latency']:.2f} ms")
     print(f"CPU Usage: {stats['cpu_usage']:.1f}%")
     
     mem = stats['memory_usage']
