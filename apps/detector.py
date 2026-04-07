@@ -46,6 +46,9 @@ class YoloDetector:
         self.confidence = confidence
         self.input_w = 640
         self.input_h = 640
+        
+        # ✅ Tự động phát hiện loại model
+        self.is_pose_model = "-pose" in model_name.lower()
 
     def detect_frame(self, frame: np.ndarray) -> tuple:
         """
@@ -86,8 +89,7 @@ class YoloDetector:
             print(f"Lỗi Arrow: {e}")
             return [], {}
 
-    @staticmethod
-    def annotate_frame(frame: np.ndarray, results: list[dict]) -> np.ndarray:
+    def annotate_frame(self, frame: np.ndarray, results: list[dict]) -> np.ndarray:
         """
         Vẽ kết quả detection lên frame gốc bằng OpenCV tốc độ cao.
         """
@@ -112,13 +114,17 @@ class YoloDetector:
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(w - 1, x2), min(h - 1, y2)
 
-            # Vẽ Bounding Box
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            # ✅ Chỉ vẽ Bounding Box khi không phải model pose
+            if not self.is_pose_model:
+                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
             # Vẽ Label Text
-            idx = class_id
-            name = COCO_CLASSES[idx] if 0 <= idx < len(COCO_CLASSES) else "Unk"
-            label = f"{name}: {conf:.2f}"
+            if self.is_pose_model:
+                label = f"Person: {conf:.2f}"
+            else:
+                idx = class_id
+                name = COCO_CLASSES[idx] if 0 <= idx < len(COCO_CLASSES) else "Unk"
+                label = f"{name}: {conf:.2f}"
 
             # Làm nền đen mờ
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -139,5 +145,38 @@ class YoloDetector:
                 (0, 255, 0),
                 2
             )
+
+            # ✅ Vẽ skeleton pose nếu là model pose
+            if self.is_pose_model and 'keypoints' in det:
+                # Arrow trả về flat list [x0,y0,c0,x1,y1,c1,...]
+                # Cần reshape thành [(x,y,conf), ...]
+                raw_kp = det['keypoints']
+                if raw_kp and len(raw_kp) >= 51:  # 17 * 3
+                    kp = [(raw_kp[i], raw_kp[i+1], raw_kp[i+2]) for i in range(0, 51, 3)]
+                else:
+                    kp = []
+                
+                # Đường nối khung xương người chuẩn COCO
+                skeleton = [
+                    (0, 1), (0, 2), (1, 3), (2, 4),
+                    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+                    (5, 11), (6, 12), (11, 12),
+                    (11, 13), (13, 15), (12, 14), (14, 16)
+                ]
+                
+                # Vẽ các đường nối
+                for (a, b) in skeleton:
+                    try:
+                        if kp[a][2] > 0.5 and kp[b][2] > 0.5:
+                            sx1, sy1 = int(kp[a][0]), int(kp[a][1])
+                            sx2, sy2 = int(kp[b][0]), int(kp[b][1])
+                            cv2.line(annotated_frame, (sx1, sy1), (sx2, sy2), (0, 255, 255), 2)
+                    except (IndexError, TypeError):
+                        continue
+                
+                # Vẽ các điểm keypoint
+                for (kx, ky, kconf) in kp:
+                    if kconf > 0.5 and 0 <= kx < w and 0 <= ky < h:
+                        cv2.circle(annotated_frame, (int(kx), int(ky)), 5, (0, 0, 255), -1)
 
         return annotated_frame

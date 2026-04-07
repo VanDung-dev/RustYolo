@@ -31,6 +31,7 @@ pub struct YoloDetection {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    pub keypoints: Vec<(f32, f32, f32)>, // (x, y, confidence) cho 17 điểm pose
 }
 
 #[pymethods]
@@ -65,6 +66,11 @@ impl YoloDetection {
         self.height
     }
 
+    #[getter]
+    fn keypoints(&self) -> Vec<(f32, f32, f32)> {
+        self.keypoints.clone()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "YoloDetection(class_id={}, confidence={:.3}, x={:.1}, y={:.1}, w={:.1}, h={:.1})",
@@ -81,6 +87,7 @@ pub struct YoloV8Detector {
     conf_threshold: f32,
     iou_threshold: f32,
     num_classes: usize,
+    num_keypoints: usize,
     pub last_preprocess_ms: f64,
     pub last_inference_ms: f64,
     pub last_nms_ms: f64,
@@ -128,6 +135,7 @@ impl YoloV8Detector {
         let input_width = 640;
         let input_height = 640;
         let num_classes = 80;
+        let num_keypoints = 0;
 
         Ok(YoloV8Detector {
             session,
@@ -136,6 +144,7 @@ impl YoloV8Detector {
             conf_threshold,
             iou_threshold,
             num_classes,
+            num_keypoints,
             last_preprocess_ms: 0.0,
             last_inference_ms: 0.0,
             last_nms_ms: 0.0,
@@ -188,25 +197,61 @@ impl YoloV8Detector {
         let boxes_w = Float32Array::from(detections.iter().map(|d| d.width).collect::<Vec<_>>());
         let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
 
-        let fields = vec![
-            Field::new("class_id", DataType::Int32, false),
-            Field::new("confidence", DataType::Float32, false),
-            Field::new("x", DataType::Float32, false),
-            Field::new("y", DataType::Float32, false),
-            Field::new("w", DataType::Float32, false),
-            Field::new("h", DataType::Float32, false),
+        let fields = if self.num_keypoints > 0 {
+            let mut fields = vec![
+                Field::new("class_id", DataType::Int32, false),
+                Field::new("confidence", DataType::Float32, false),
+                Field::new("x", DataType::Float32, false),
+                Field::new("y", DataType::Float32, false),
+                Field::new("w", DataType::Float32, false),
+                Field::new("h", DataType::Float32, false),
+            ];
+            
+            // Thêm các keypoint field vào Arrow schema
+            fields.push(Field::new(
+                "keypoints",
+                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+                true
+            ));
+            
+            fields
+        } else {
+            vec![
+                Field::new("class_id", DataType::Int32, false),
+                Field::new("confidence", DataType::Float32, false),
+                Field::new("x", DataType::Float32, false),
+                Field::new("y", DataType::Float32, false),
+                Field::new("w", DataType::Float32, false),
+                Field::new("h", DataType::Float32, false),
+            ]
+        };
+
+        let mut arrays: Vec<Arc<dyn Array>> = vec![
+            Arc::new(class_ids),
+            Arc::new(confidences),
+            Arc::new(boxes_x),
+            Arc::new(boxes_y),
+            Arc::new(boxes_w),
+            Arc::new(boxes_h),
         ];
+
+        // Thêm keypoints array vào khi là model pose
+        if self.num_keypoints > 0 {
+            let mut kp_builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
+            for det in &detections {
+                for (x, y, conf) in &det.keypoints {
+                    kp_builder.values().append_value(*x);
+                    kp_builder.values().append_value(*y);
+                    kp_builder.values().append_value(*conf);
+                }
+                kp_builder.append(true);
+            }
+            arrays.push(Arc::new(kp_builder.finish()));
+        }
 
         let struct_array = StructArray::try_new(
             Fields::from(fields),
-            vec![
-                Arc::new(class_ids),
-                Arc::new(confidences),
-                Arc::new(boxes_x),
-                Arc::new(boxes_y),
-                Arc::new(boxes_w),
-                Arc::new(boxes_h),
-            ],
+            arrays,
             None,
         ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e)))?;
 
@@ -320,10 +365,24 @@ impl YoloV8Detector {
         let out_shape = out_value.try_extract_tensor::<f32>().map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?.0;
         let out_data = out_value.try_extract_tensor::<f32>().map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Extract error: {}", e)))?.1;
         
-        let num_classes = (out_shape[1] - 4) as usize;
+        // ✅ Xác định loại model tự động
+        let total_channels = out_shape[1] as usize;
         let num_anchors = out_shape[2] as usize;
+        
+        // YOLOv8 Pose có 56 channel: 4 + 1 + 17*3
+        let num_classes = if total_channels == 56 {
+            1 // Pose chỉ có 1 class duy nhất là person
+        } else {
+            (total_channels - 4) as usize
+        };
         self.num_classes = num_classes;
         
+        self.num_keypoints = if total_channels == 56 {
+            17
+        } else {
+            0
+        };
+
         let scale_x = orig_dim.0 as f32 / self.input_width as f32;
         let scale_y = orig_dim.1 as f32 / self.input_height as f32;
         let conf_threshold = self.conf_threshold;
@@ -358,8 +417,38 @@ impl YoloV8Detector {
                 let y = (cy - h / 2.0) * scale_y;
                 let width = w * scale_x;
                 let height = h * scale_y;
+
+                let mut keypoints = Vec::with_capacity(17);
+                let output_len = out_data.len();
+                let base_offset = (4 + num_classes) * num_anchors;
                 
-                all_boxes.push((x, y, width, height, max_conf, max_class));
+                // ✅ Chỉ decode keypoints khi output buffer đủ lớn (tức là model pose)
+                if output_len >= base_offset + 17 * 3 * num_anchors {
+                    for kp_idx in 0..17 {
+                        let x_offset = base_offset + kp_idx * 3 * num_anchors + i;
+                        let y_offset = base_offset + (kp_idx * 3 + 1) * num_anchors + i;
+                        let c_offset = base_offset + (kp_idx * 3 + 2) * num_anchors + i;
+                        
+                        if x_offset >= output_len || y_offset >= output_len || c_offset >= output_len {
+                            keypoints.push((0.0, 0.0, 0.0));
+                            continue;
+                        }
+                        
+                        // Keypoint tọa độ trong không gian model 640x640, scale về frame gốc
+                        let kx = out_data[x_offset] * scale_x;
+                        let ky = out_data[y_offset] * scale_y;
+                        let kconf = out_data[c_offset];
+                        keypoints.push((kx, ky, kconf));
+                    }
+                }
+                
+                // ✅ Giới hạn tọa độ trong kích thước frame
+                let x = x.clamp(0.0, orig_dim.0 as f32);
+                let y = y.clamp(0.0, orig_dim.1 as f32);
+                let width = width.clamp(0.0, orig_dim.0 as f32);
+                let height = height.clamp(0.0, orig_dim.1 as f32);
+                
+                all_boxes.push((x, y, width, height, max_conf, max_class, keypoints));
             }
         }
         
@@ -375,11 +464,12 @@ impl YoloV8Detector {
         for i in 0..all_boxes.len() {
             if !keep[i] { continue; }
             
-            let (x, y, w, h, conf, class_id) = all_boxes[i];
+            let (x, y, w, h, conf, class_id, ref keypoints) = all_boxes[i];
             detections.push(YoloDetection {
                 class_id: class_id as i32,
                 confidence: conf,
                 x, y, width: w, height: h,
+                keypoints: keypoints.clone(),
             });
 
             // Suppress overlapping boxes
@@ -397,8 +487,8 @@ impl YoloV8Detector {
     }
 
     fn compute_iou_internal(
-        box1: &(f32, f32, f32, f32, f32, usize),
-        box2: &(f32, f32, f32, f32, f32, usize),
+        box1: &(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>),
+        box2: &(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>),
     ) -> f32 {
         let x1 = box1.0.max(box2.0);
         let y1 = box1.1.max(box2.1);
