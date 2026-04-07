@@ -374,6 +374,44 @@ impl YoloV8Detector {
             return Ok((cls_results, None));
         }
 
+        // ── End-to-End (E2E) Model: output0 shape is [1, 300, 6] ────────────
+        // YOLOv10 / YOLOv26 NMS-Free format: [batch, num_queries, 6]
+        // 6 values: [x1, y1, x2, y2, score, class_id]
+        if ndim == 3 && out_shape[2] == 6 {
+            let num_queries = out_shape[1] as usize;
+            let scale_x = orig_dim.0 as f32 / self.input_width as f32;
+            let scale_y = orig_dim.1 as f32 / self.input_height as f32;
+            
+            let mut detections = Vec::with_capacity(32);
+            for i in 0..num_queries {
+                let base = i * 6;
+                let score = out_data[base + 4];
+                if score < self.conf_threshold {
+                    continue;
+                }
+                
+                let x1 = out_data[base + 0] * scale_x;
+                let y1 = out_data[base + 1] * scale_y;
+                let x2 = out_data[base + 2] * scale_x;
+                let y2 = out_data[base + 3] * scale_y;
+                let class_id = out_data[base + 5] as i32;
+                
+                detections.push(YoloDetection {
+                    class_id,
+                    confidence: score,
+                    x: x1,
+                    y: y1,
+                    width: x2 - x1,
+                    height: y2 - y1,
+                    keypoints: vec![],
+                    mask_coeffs: vec![],
+                });
+            }
+            
+            self.last_nms_ms = 0.0; // E2E models are NMS-free
+            return Ok((detections, None));
+        }
+
         self.is_cls_model = false;
         let num_anchors = out_shape[2] as usize;
 
