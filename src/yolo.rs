@@ -5,6 +5,8 @@
 //! - Các hằng số hoặc tiện ích chung khác
 
 use pyo3::prelude::*;
+use ort::session::Session;
+use log::info;
 
 #[pyclass(from_py_object)]
 #[derive(Clone)]
@@ -59,5 +61,90 @@ impl YoloDetection {
             "YoloDetection(class_id={}, confidence={:.3}, x={:.1}, y={:.1}, w={:.1}, h={:.1})",
             self.class_id, self.confidence, self.x, self.y, self.width, self.height
         )
+    }
+}
+
+#[pyclass]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YoloArchitecture {
+    V8, // YOLOv8, v11 (Anchor-based + NMS)
+    V26, // YOLOv26, v10 (NMS-Free)
+}
+
+#[pyclass]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YoloTask {
+    Detection,
+    Pose,
+    Segmentation,
+    OBB,
+    Classification,
+}
+
+pub struct ModelConfig {
+    pub arch: YoloArchitecture,
+    pub task: YoloTask,
+    pub input_size: (usize, usize),
+    pub num_classes: usize,
+    pub num_keypoints: usize,
+    pub num_mask_coeffs: usize,
+}
+
+impl ModelConfig {
+    /// Tự động xác định cấu trúc model dựa trên filename và Session outputs
+    pub fn identify(path: &str, session: &Session) -> Self {
+        let name = path.to_lowercase();
+        
+        // 1. Xác định Kiến trúc (Arch)
+        let mut arch = YoloArchitecture::V8;
+        if name.contains("v26") || name.contains("v10") || name.contains("nms-free") {
+            arch = YoloArchitecture::V26;
+        }
+
+        // 2. Xác định Task
+        let task = if name.contains("-pose") {
+            YoloTask::Pose
+        } else if name.contains("-seg") {
+            YoloTask::Segmentation
+        } else if name.contains("-obb") {
+            YoloTask::OBB
+        } else if name.contains("-cls") {
+            YoloTask::Classification
+        } else {
+            YoloTask::Detection
+        };
+
+        // 3. Cấu hình mặc định theo task
+        let mut num_classes = 80;
+        let mut num_keypoints = 0;
+        let mut num_mask_coeffs = 0;
+
+        match task {
+            YoloTask::Pose => {
+                num_classes = 1;
+                num_keypoints = 17;
+            }
+            YoloTask::Segmentation => {
+                num_mask_coeffs = 32;
+            }
+            YoloTask::OBB => {
+                num_classes = 15;
+            }
+            _ => {}
+        }
+
+        info!(
+            "Identified Model: Arch={:?}, Task={:?}, path={}",
+            arch, task, path
+        );
+
+        Self {
+            arch,
+            task,
+            input_size: (640, 640),
+            num_classes,
+            num_keypoints,
+            num_mask_coeffs,
+        }
     }
 }

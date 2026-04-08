@@ -18,7 +18,7 @@ use pyo3::types::{PyCapsule, PyList};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::yolo::YoloDetection;
+use crate::yolo::{YoloDetection, ModelConfig, YoloTask};
 
 #[pyclass]
 pub struct YoloV8Detector {
@@ -48,11 +48,6 @@ impl YoloV8Detector {
     fn new(model_path: &str, conf_threshold: f32, iou_threshold: f32) -> PyResult<Self> {
         debug!("YoloV8Detector::new called with model: {}", model_path);
         
-        let model_name = model_path.to_lowercase();
-        let is_pose = model_name.contains("-pose");
-        let is_seg = model_name.contains("-seg");
-        let is_cls = model_name.contains("-cls");
-        let is_obb = model_name.contains("-obb");
 
         if !CoreML::default().is_available().unwrap_or(false) {
             warn!("CoreML không khả dụng. Đang lùi về CPU.");
@@ -85,39 +80,24 @@ impl YoloV8Detector {
                 ))
             })?;
 
-        // Thiết lập cấu hình model dựa trên hậu tố
-        let mut num_classes = 80;
-        let mut num_keypoints = 0;
-        let mut num_mask_coeffs = 0;
-        let input_width = 640;
-        let input_height = 640;
-
-        if is_pose {
-            num_classes = 1;
-            num_keypoints = 17;
-        } else if is_seg {
-            num_classes = 80;
-            num_mask_coeffs = 32;
-        } else if is_obb {
-            num_classes = 15; // DOTA default
-        }
+        let config = ModelConfig::identify(model_path, &session);
 
         info!(
-            "Model config: cls={}, pose={}, seg={}, obb={}, classes={}, input={}x{}",
-            is_cls, is_pose, is_seg, is_obb, num_classes, input_width, input_height
+            "Model config: arch={:?}, task={:?}, classes={}, input={}x{}",
+            config.arch, config.task, config.num_classes, config.input_size.0, config.input_size.1
         );
 
         Ok(Self {
             session,
-            input_width,
-            input_height,
+            input_width: config.input_size.0,
+            input_height: config.input_size.1,
             conf_threshold,
             iou_threshold,
-            num_classes,
-            num_keypoints,
-            num_mask_coeffs,
-            is_cls_model: is_cls,
-            is_obb_model: is_obb,
+            num_classes: config.num_classes,
+            num_keypoints: config.num_keypoints,
+            num_mask_coeffs: config.num_mask_coeffs,
+            is_cls_model: config.task == YoloTask::Classification,
+            is_obb_model: config.task == YoloTask::OBB,
             last_preprocess_ms: 0.0,
             last_inference_ms: 0.0,
             last_nms_ms: 0.0,
