@@ -13,10 +13,14 @@ use pyo3::prelude::*;
 mod ffi;
 pub mod image_proc;
 mod monitor;
+mod v8;
+mod v26;
 mod yolo;
 
 pub use monitor::PerformanceMonitor;
-pub use yolo::{YoloDetection, YoloV8Detector};
+pub use v8::YoloV8Detector;
+pub use v26::YoloV26Detector;
+pub use yolo::YoloDetection;
 
 /// Khởi tạo module
 #[pymodule]
@@ -26,7 +30,10 @@ fn rust_yolo(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<PerformanceMonitor>()?;
     m.add_class::<YoloV8Detector>()?;
+    m.add_class::<YoloV26Detector>()?;
     m.add_class::<YoloDetection>()?;
+    m.add_class::<yolo::YoloArchitecture>()?;
+    m.add_class::<yolo::YoloTask>()?;
 
     Ok(())
 }

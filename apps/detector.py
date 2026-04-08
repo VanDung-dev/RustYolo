@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Import trực tiếp Native Rust Engine đã biên dịch
-from rust_yolo import YoloV8Detector
+from rust_yolo import YoloV8Detector, YoloV26Detector, YoloArchitecture
 
 # Toàn bộ constants được quản lý tập trung tại apps/config.py
 from apps.config import (
@@ -38,20 +38,29 @@ class YoloDetector:
     """YOLOv8 Object / Pose / Segmentation Detector — Rust + Arrow zero-copy."""
 
     def __init__(self, model_name: str = "yolov8n.onnx", confidence: float = 0.5):
-        self.detector = YoloV8Detector(
-            model_name,
-            conf_threshold=confidence,
-            iou_threshold=0.45,
-        )
+        self.model_name = model_name
         self.confidence = confidence
         self.input_w = 640
         self.input_h = 640
         self.is_pose_model = "-pose" in model_name.lower()
         self.is_seg_model = "-seg" in model_name.lower()
         self.is_cls_model = "-cls" in model_name.lower()
-        self.is_obb_model = "-obb" in model_name.lower() or (
-            hasattr(self.detector, "is_obb_model") and self.detector.is_obb_model
-        )
+        self.is_obb_model = "-obb" in model_name.lower()
+
+        # Thử xác định architecture từ logic của Rust (nếu có thể gọi static)
+        # Hoặc khởi tạo tạm và check config. Ở đây ta dùng logic string tương tự
+        if "v26" in model_name.lower() or "26" in model_name.lower() or "v10" in model_name.lower():
+            logger.info(f"🚀 Khởi tạo YOLOv26 (NMS-Free) Engine cho: {model_name}")
+            self.detector = YoloV26Detector(model_name, conf_threshold=confidence)
+            self.arch = YoloArchitecture.V26
+        else:
+            logger.info(f"🎯 Khởi tạo YOLOv8 (Anchor-based) Engine cho: {model_name}")
+            self.detector = YoloV8Detector(
+                model_name,
+                conf_threshold=confidence,
+                iou_threshold=0.45,
+            )
+            self.arch = YoloArchitecture.V8
 
         # Proto tensor cache (cập nhật mỗi frame, dùng trong annotate_frame)
         self._proto: np.ndarray | None = None
@@ -73,7 +82,12 @@ class YoloDetector:
             # YOLOv8 expects RGB, while OpenCV provides BGR
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            arr_cap, sch_cap, proto_arr_cap, proto_sch_cap = self.detector.detect_to_arrow(frame_rgb)
+            res = self.detector.detect_to_arrow(frame_rgb)
+            if len(res) == 2: # YOLOv26 returns only 2 caps (no mask proto)
+                arr_cap, sch_cap = res
+                proto_arr_cap, proto_sch_cap = None, None
+            else:
+                arr_cap, sch_cap, proto_arr_cap, proto_sch_cap = res
 
             results_arrow = pa.Array._import_from_c_capsule(sch_cap, arr_cap)
 
