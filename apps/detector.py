@@ -53,8 +53,6 @@ class YoloDetector:
             hasattr(self.detector, "is_obb_model") and self.detector.is_obb_model
         )
 
-
-
         # Proto tensor cache (cập nhật mỗi frame, dùng trong annotate_frame)
         self._proto: np.ndarray | None = None
 
@@ -75,8 +73,7 @@ class YoloDetector:
             # YOLOv8 expects RGB, while OpenCV provides BGR
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            arr_cap, sch_cap, proto_arr_cap, proto_sch_cap = \
-                self.detector.detect_to_arrow(frame_rgb)
+            arr_cap, sch_cap, proto_arr_cap, proto_sch_cap = self.detector.detect_to_arrow(frame_rgb)
 
             results_arrow = pa.Array._import_from_c_capsule(sch_cap, arr_cap)
 
@@ -87,9 +84,11 @@ class YoloDetector:
             }
 
             # Proto tensor cho seg model (zero-copy qua Arrow)
-            if (self.is_seg_model
-                    and proto_arr_cap is not None
-                    and proto_sch_cap is not None):
+            if (
+                self.is_seg_model
+                and proto_arr_cap is not None
+                and proto_sch_cap is not None
+            ):
                 proto_arrow = pa.Array._import_from_c_capsule(
                     proto_sch_cap, proto_arr_cap
                 )
@@ -160,10 +159,12 @@ class YoloDetector:
             # Draw Box / Poly
             if self.is_obb_model and len(det.get("keypoints", [])) >= 4:
                 # OBB: Vẽ đa giác từ 4 đỉnh
-                pts = np.array([
-                    [int(kp[0]), int(kp[1])] for kp in det["keypoints"][:4]
-                ], np.int32).reshape((-1, 1, 2))
-                cv2.polylines(annotated, [pts], isClosed=True, color=(0, 255, 255), thickness=2, lineType=cv2.LINE_AA)
+                pts = np.array(
+                    [[int(kp[0]), int(kp[1])] for kp in det["keypoints"][:4]], np.int32).reshape((-1, 1, 2)
+                )
+                cv2.polylines(
+                    annotated, [pts], isClosed=True, color=(0, 255, 255), thickness=2, lineType=cv2.LINE_AA
+                )
 
                 # Label tại đỉnh đầu tiên
                 label_pos = (int(det["keypoints"][0][0]), int(det["keypoints"][0][1]) - 10)
@@ -192,11 +193,7 @@ class YoloDetector:
         return annotated
 
     def _draw_seg_masks(
-        self,
-        annotated: np.ndarray,
-        results: list,
-        h: int,
-        w: int,
+        self, annotated: np.ndarray, results: list, h: int, w: int,
     ) -> np.ndarray:
         """
         Tính và vẽ instance segmentation masks lên frame.
@@ -254,22 +251,16 @@ class YoloDetector:
 
         return np.clip(overlay, 0, 255).astype(np.uint8)
 
+    @staticmethod
     def _draw_skeleton(
-        self,
-        annotated: np.ndarray,
-        det: dict,
-        h: int,
-        w: int,
+        annotated: np.ndarray, det: dict, h: int, w: int
     ) -> np.ndarray:
         """Vẽ skeleton pose chuẩn COCO với màu theo nhóm cơ thể."""
         raw_kp = det.get("keypoints", [])
         if not raw_kp or len(raw_kp) < 51:
             return annotated
 
-        kp = [
-            (raw_kp[i], raw_kp[i + 1], raw_kp[i + 2])
-            for i in range(0, 51, 3)
-        ]
+        kp = [(raw_kp[i], raw_kp[i + 1], raw_kp[i + 2]) for i in range(0, 51, 3)]
 
         # Vẽ limb (đường nối), màu lấy từ config.SKELETON_EDGES
         for (a, b, color) in SKELETON_EDGES:
@@ -300,12 +291,11 @@ class YoloDetector:
 
         return annotated
 
-    def _draw_classification_overlay(self, annotated: np.ndarray, results: list) -> np.ndarray:
+    @staticmethod
+    def _draw_classification_overlay(annotated: np.ndarray, results: list) -> np.ndarray:
         """Vẽ panel hiển thị Top-5 classification."""
         if not results:
             return annotated
-
-        h, w = annotated.shape[:2]
         
         # Tạo semi-transparent overlay ở góc trái trên
         panel_w = 400
@@ -317,8 +307,10 @@ class YoloDetector:
         cv2.addWeighted(overlay, 0.6, annotated, 0.4, 0, annotated)
         
         # Tiêu đề
-        cv2.putText(annotated, "🏆 Top Classification:", (20, 45), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(
+            annotated, "🏆 Top Classification:", (20, 45), cv2.FONT_HERSHEY_SIMPLEX,
+            0.8, (255, 255, 255), 2, cv2.LINE_AA
+        )
         
         # Hiển thị từng class
         for i, det in enumerate(results):
@@ -334,12 +326,16 @@ class YoloDetector:
             y_pos = 85 + (i * 35)
             
             # Vẽ số thứ tự
-            cv2.putText(annotated, f"#{i+1}", (25, y_pos), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1, cv2.LINE_AA)
+            cv2.putText(
+                annotated, f"#{i+1}", (25, y_pos), cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (0, 255, 0), 1, cv2.LINE_AA
+            )
             
             # Vẽ tên class
-            cv2.putText(annotated, f"{label[:25]}", (70, y_pos), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(
+                annotated, f"{label[:25]}", (70, y_pos), cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (255, 255, 255), 1, cv2.LINE_AA
+            )
             
             # Vẽ confidence bar
             bar_start_x = 240
@@ -352,7 +348,9 @@ class YoloDetector:
             cv2.rectangle(annotated, (bar_start_x, y_pos - 12), (bar_start_x + bar_w, y_pos + 2), (0, 255, 0), -1)
             
             # % text
-            cv2.putText(annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
+            cv2.putText(
+                annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA
+            )
             
         return annotated
