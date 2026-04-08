@@ -140,7 +140,7 @@ impl PerformanceMonitor {
 
     /// Nhận buffer pointer trực tiếp từ Python numpy (zero copy)
     fn process_frame(&mut self, _py: Python, ptr: usize, length: usize) -> PyResult<f64> {
-        let start = std::time::Instant::now();
+        let start = Instant::now();
 
         unsafe {
             let data_ptr = ptr as *const u8;

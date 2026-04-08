@@ -7,10 +7,12 @@
 //! - Normalize giá trị pixel [0,255] -> [0,1]
 //!
 //! Nhanh hơn 5-10 lần so với implement OpenCV thông thường
+
 use kornia_image::{Image, ImageSize, allocator::CpuAllocator};
 use kornia_imgproc::interpolation::InterpolationMode;
 use kornia_imgproc::resize::resize_fast_rgb;
 use ndarray::Array4;
+
 pub fn preprocess_image_kornia(
     raw_data: &[u8],
     orig_width: usize,
