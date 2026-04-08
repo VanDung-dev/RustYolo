@@ -1,6 +1,6 @@
-# Rust YOLOv8 Edge AI
+# Rust YOLO Edge AI
 
-✅ Ngăn xếp phát hiện đối tượng YOLOv8 hiệu suất cao cho Apple Silicon với kiến trúc lai Rust + Python + Zero-Copy.
+Tối ưu mô hình YOLO hiệu suất cao cho Apple Silicon với kiến trúc lai Rust + Python.
 
 ---
 
@@ -41,46 +41,6 @@ rust_yolo/
 
 ---
 
-## 🔗 Kiến trúc giao tiếp
-
-Dự án này sử dụng kiến trúc hybrid tối ưu nhất hiện có cho edge AI.
-
-```mermaid
-flowchart TD
-    subgraph Python Layer [🐍 PYTHON LAYER]
-        direction TB
-        A[OpenCV Camera I/O] --> B[Frame Buffer Numpy]
-        B --> C[UI Render OpenCV]
-        D[Application Logic]
-        E[Arrow Import]
-    end
-
-    subgraph Boundary [⚡ ZERO COPY BOUNDARY]
-        direction LR
-        F[PyCapsule Con trỏ C]
-        G[Apache Arrow C Data Interface]
-    end
-
-    subgraph Rust Layer [🦀 RUST LAYER]
-        direction TB
-        H[Preprocessing Kornia SIMD]
-        I[YOLOv8 Inference ONNX Runtime]
-        J[NMS Parallel Rayon]
-        K[System Monitor Background Thread]
-        L[Arrow Export]
-    end
-
-    B --> |&ptr numpy buffer| H
-    L --> |2 con trỏ C| E
-
-    %% Luồng xử lý bên Rust
-    H --> I
-    I --> J
-    J --> L
-```
-
----
-
 ### 📐 Luồng xử lý từng frame
 
 ```mermaid
@@ -113,13 +73,10 @@ sequenceDiagram
     end
 ```
 
-✅ **Python**: chỉ chịu trách nhiệm I/O và UI
-
-✅ **Rust**: toàn bộ tính toán nặng, AI, xử lý số liệu
-
-✅ **Không có copy dữ liệu** qua biên giới ngôn ngữ
-
-✅ GIL được release 100% trong quá trình inference
+* **Python**: chỉ chịu trách nhiệm I/O và UI
+* **Rust**: toàn bộ tính toán nặng, AI, xử lý số liệu
+* **Không có copy dữ liệu** qua biên giới ngôn ngữ
+* GIL được release 100% trong quá trình inference
 
 ---
 
@@ -139,8 +96,6 @@ stateDiagram-v2
     Warning: ⚠️ Thêm 10ms delay mỗi frame\nGiảm tải chủ động
     Throttling: 🔴 Thêm 30ms delay mỗi frame\nBảo vệ phần cứng
 ```
-
-✅ Hệ thống tự động điều tiết tải trước khi phần cứng tự giảm xung nhịp. Đây là khác biệt quan trọng so với tất cả các hệ thống khác: thay vì bị hệ điều hành buộc giảm tốc, chúng ta chủ động giảm tải nhẹ nhàng để nhiệt độ ổn định và không gặp phải hiện tượng thermal throttling đột ngột.
 
 ---
 
@@ -168,52 +123,44 @@ pip install maturin
 maturin develop --release
 ```
 
-### 4. Chạy demo camera
+### 4. Tải mô hình Yolo và chuyển đổi thành ONNX
 ```bash
-python main.py --model yolov8x.onnx
+python export_onnx_for_rust.py # yolov8n
+```
+
+### 5. Chạy demo camera
+```bash
+python main.py --model yolov8n.onnx # Mô hình Nano để test nhanh
 ```
 
 ---
 
 ## ⚡ Performance Benchmark (Apple Silicon)
 
-✅ **Kiến trúc không block UI**: Luôn chạy camera 60fps mượt mà 100% bất kể tốc độ model. Video không bao giờ bị đứng hay giật lag. Chỉ có bounding box cập nhật theo tốc độ inference AI.
+**Kiến trúc không block UI**: Luôn chạy camera 60fps mượt mà 100% bất kể tốc độ model. Video không bao giờ bị đứng hay giật lag. Chỉ có bounding box cập nhật theo tốc độ inference AI.
 
-| Model | AI Latency | AI FPS | Camera Display FPS | Trải nghiệm người dùng                                     |
-|---|---|--------|---|------------------------------------------------------------|
-| yolov8n | 23.5 ms | 40 fps | 60 fps | ✅ Mượt hoàn hảo                                            |
-| yolov8s | 28.5 ms | 35 fps | 60 fps | ✅ Mượt hoàn hảo                                            |
-| yolov8m | 38.5 ms | 26 fps | 60 fps | ✅ Rất mượt                                                 |
-| yolov8l | 48.5 ms | 21 fps | 60 fps | ✅ Mượt, không cảm giác giật                                |
-| yolov8x | 60.5 ms | 16 fps | 60 fps | ✅ Video vẫn 60fps mượt, chỉ detection cập nhật 16 lần/giây |
-
-> 💡 Điểm đặc biệt độc đáo của dự án này: Với các model nặng như yolov8x, người dùng vẫn xem video mượt 60fps bình thường, không giống các project khác thường làm video đứng lại chờ kết quả AI.
-
-> ✅ Các giá trị trên đạt giới hạn vật lý của phần cứng.
+| Model | AI Latency | AI FPS | Camera Display FPS | Trải nghiệm người dùng |
+|---|---|--------|---|-------------------|
+| yolov8n | 23.5 ms | 40 fps | 60 fps | Mượt nhất         |
+| yolov8s | 28.5 ms | 35 fps | 60 fps | Mượt              |
+| yolov8m | 38.5 ms | 26 fps | 60 fps | Ổn định      |
+| yolov8l | 48.5 ms | 21 fps | 60 fps | Hơi chậm              |
+| yolov8x | 60.5 ms | 16 fps | 60 fps | Chậm              |
 
 ---
 
 ## 🔧 Tính năng
 
-✅ Realtime object detection 80 classes COCO
-
-✅ Full system monitoring: CPU, GPU, Memory, Thermal
-
-✅ Thermal gradient dT/dt realtime measurement
-
-✅ Full latency breakdown per stage
-
-✅ Hardware accelerated CoreML ANE / GPU
-
-✅ Zero copy data transfer
-
-✅ Thread safe background monitoring
-
-✅ Hỗ trợ toàn bộ dòng YOLOv8
-
-✅ Adaptive Thermal Scheduling tự động điều tiết tải
-
-✅ Non-blocking UI luôn mượt 60fps
+* Realtime object detection 80 classes COCO
+* Full system monitoring: CPU, GPU, Memory, Thermal
+* Thermal gradient dT/dt realtime measurement
+* Full latency breakdown per stage
+* Hardware accelerated CoreML ANE / GPU
+* Zero copy data transfer
+* Thread safe background monitoring
+* Hỗ trợ toàn bộ dòng YOLOv8
+* Adaptive Thermal Scheduling tự động điều tiết tải
+* Non-blocking UI luôn mượt 60fps
 
 ---
 
