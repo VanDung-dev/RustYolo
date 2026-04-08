@@ -7,6 +7,11 @@ import time
 import threading
 import queue
 from rust_yolo import YoloV8Detector, PerformanceMonitor
+import logging
+
+# Cấu hình logging
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
 
 # COCO labels for YOLOv8 (80 classes)
 COCO_CLASSES = [
@@ -77,7 +82,7 @@ stop_event = threading.Event()
 
 def ai_worker(detector, input_w, input_h):
     """Luồng chuyên biệt để chạy suy luận AI"""
-    print("🤖 AI Worker Thread đã sẵn sàng.")
+    logger.info("AI Worker Thread đã sẵn sàng.")
     while not stop_event.is_set():
         try:
             # Lấy ảnh mới nhất ra để xử lý
@@ -98,10 +103,10 @@ def ai_worker(detector, input_w, input_h):
         except queue.Empty:
             continue
         except Exception as e:
-            print(f"❌ Lỗi trong AI Worker: {e}")
+            logger.error(f"Lỗi trong AI Worker: {e}")
 
 def run_autonomous_scanner():
-    print("🚀 Khởi tạo hệ thống YOLOv8 Autonomous Scanner (Kiến trúc PIPELINE)...")
+    logger.info("Khởi tạo hệ thống YOLOv8 Autonomous Scanner (Kiến trúc PIPELINE)...")
     
     # Kích thước input của mô hình
     input_w, input_h = 640, 640
@@ -112,12 +117,12 @@ def run_autonomous_scanner():
         detector = YoloV8Detector("yolov8n.onnx", conf_threshold=0.25, iou_threshold=0.45)
         monitor = PerformanceMonitor()
     except Exception as e:
-        print(f"❌ Lỗi khởi tạo modules: {e}")
+        logger.error(f"Lỗi khởi tạo modules: {e}")
         return
 
     src = find_camera_src()
     if src is None:
-        print("❌ Không tìm thấy camera khả dụng nào!")
+        logger.error("Không tìm thấy camera khả dụng nào!")
         return
 
     # Khởi động AI Worker Thread
@@ -127,7 +132,7 @@ def run_autonomous_scanner():
     # Khởi động stream capture
     stream = VideoStream(src).start()
     time.sleep(1.0) # Đợi camera ổn định
-    print("📸 Đang quét (Gối đầu)... Nhấn 'q' để thoát.")
+    logger.info("Đang quét (Gối đầu)... Nhấn 'q' để thoát.")
     
     current_detections = []
     current_inf_time = 0.0
@@ -191,12 +196,12 @@ def run_autonomous_scanner():
                 break
 
     except Exception as e:
-        print(f"❌ Lỗi trong quá trình quét: {e}")
+        logger.error(f"Lỗi trong quá trình quét: {e}")
     finally:
         stop_event.set()
         stream.stop()
         cv2.destroyAllWindows()
-        print("👋 Đã dừng quét.")
+        logger.info("Đã dừng quét.")
 
 if __name__ == "__main__":
     run_autonomous_scanner()

@@ -5,6 +5,11 @@ Kiểm tra modules YoloV8Detector
 import cv2
 import numpy as np
 from rust_yolo import YoloV8Detector
+import logging
+
+# Cấu hình logging
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger(__name__)
 
 COCO_CLASSES = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
@@ -20,27 +25,27 @@ COCO_CLASSES = [
 ]
 
 def test_yolov8n():
-    print("Đang khởi tạo YOLOv8n detector...")
+    logger.info("Đang khởi tạo YOLOv8n detector...")
     detector = YoloV8Detector("yolov8n.onnx", conf_threshold=0.25, iou_threshold=0.45)
     
     input_size = detector.get_input_size()
-    print(f"Input size: {input_size}")
+    logger.info(f"Input size: {input_size}")
     
-    # ✅ Tạo ảnh test có nội dung thực tế để phát hiện object
+    # Tạo ảnh test có nội dung thực tế để phát hiện object
     test_image = np.zeros((640, 640, 3), dtype=np.uint8)
     # Vẽ hình chữ nhật giả lập người
     cv2.rectangle(test_image, (100, 100), (300, 500), (128, 128, 128), -1)
     # Vẽ đầu người
     cv2.circle(test_image, (200, 70), 40, (180, 180, 180), -1)
     
-    print("Đang test với ảnh mẫu test...")
+    logger.info("Đang test với ảnh mẫu test...")
     detections = detector.detect_from_numpy(test_image)
-    print(f"Số object phát hiện: {len(detections)}")
+    logger.info(f"Số object phát hiện: {len(detections)}")
     
     for det in detections:
-        print(f"  {det}")
+        logger.info(f"  {det}")
     
-    print("\nTest thành công! YOLOv8n hoạt động bình thường.")
+    logger.info("\nTest thành công! YOLOv8n hoạt động bình thường.")
 
 if __name__ == "__main__":
     test_yolov8n()
