@@ -10,16 +10,74 @@ Module này chỉ chịu trách nhiệm VẼ hình ảnh, không tính toán gì
 
 import cv2
 import numpy as np
+import ctypes
 from typing import Any
 
 from .config import COLORS, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT
+
+
+def get_display_scale() -> float:
+    """
+    Lấy độ phân giải màn hình hiện tại và tính tỉ lệ scale tự động
+    hỗ trợ Windows, macOS, Linux
+    """
+    try:
+        # Windows API
+        if hasattr(ctypes, 'windll'):
+            user32 = ctypes.windll.user32
+            user32.SetProcessDPIAware()
+            screen_width = user32.GetSystemMetrics(0)
+            screen_height = user32.GetSystemMetrics(1)
+            
+            # Tính tỉ lệ DPI scale
+            dpi = user32.GetDpiForSystem()
+            scale = dpi / 96.0
+            
+        # macOS / Linux
+        else:
+            import tkinter as tk
+            root = tk.Tk()
+            screen_width = root.winfo_screenwidth()
+            screen_height = root.winfo_screenheight()
+            scale = root.winfo_fpixels('1i') / 72.0
+            root.destroy()
+
+        # Tính tỉ lệ scale phù hợp dựa trên chiều cao màn hình
+        base_height = 1080
+        height_scale = screen_height / base_height
+        
+        # Giới hạn scale trong khoảng 0.6 -> 1.6
+        final_scale = max(0.6, min(1.6, height_scale * scale))
+        
+        return final_scale
+
+    except Exception:
+        # Fallback về scale 1.0 nếu không lấy được thông tin màn hình
+        return 1.0
+
+# Tính scale 1 lần duy nhất khi import module
+GLOBAL_SCALE = get_display_scale()
 
 
 def create_stats_panel(
     stats: dict[str, Any],
     width: int = STATS_PANEL_WIDTH,
     height: int = STATS_PANEL_HEIGHT,
+    target_height: int | None = None,
+    scale: float = GLOBAL_SCALE,
 ) -> np.ndarray:
+    
+    # ✅ Scale toàn bộ kích thước theo tỉ lệ màn hình
+    width = int(width * scale)
+    height = int(height * scale)
+    
+    # ✅ Nếu có target_height thì điều chỉnh scale để khớp chính xác chiều cao frame camera
+    if target_height is not None:
+        # Tính lại scale để stats panel khớp chính xác chiều cao
+        height_scale = target_height / height
+        width = int(width * height_scale)
+        height = target_height
+        scale = scale * height_scale
     """
     Tạo bảng thống kê hiệu năng.
 
@@ -34,10 +92,10 @@ def create_stats_panel(
     panel = np.zeros((height, width, 3), dtype=np.uint8)
     panel[:] = COLORS["bg"]  # Màu nền tối
 
-    y_offset = 35
-    line_height = 44
+    y_offset = int(35 * scale)
+    line_height = int(44 * scale)
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.76
+    font_scale = 0.76 * scale
 
     # Tiêu đề
     cv2.putText(

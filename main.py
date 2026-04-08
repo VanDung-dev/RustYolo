@@ -199,7 +199,7 @@ def run_camera_detection(
             # Lấy stats cached và hiển thị panel
             stats = monitor.get_stats()
             stats.update(stats_extra)
-            stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT)
+            stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT, target_height=annotated_frame.shape[0])
 
             # Ghép frame và stats panel
             combined_frame = np.hstack((annotated_frame, stats_panel))
