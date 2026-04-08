@@ -175,42 +175,14 @@ impl YoloV8Detector {
     fn detect_to_arrow<'py>(
         &mut self,
         py: Python<'py>,
-        numpy_array: &Bound<'py, pyo3::PyAny>,
+        numpy_array: &Bound<'py,PyAny>,
     ) -> PyResult<(
         Bound<'py, PyCapsule>,
         Bound<'py, PyCapsule>,
-        Py<pyo3::PyAny>, // proto array capsule hoặc None
-        Py<pyo3::PyAny>, // proto schema capsule hoặc None
+        Py<PyAny>, // proto array capsule hoặc None
+        Py<PyAny>, // proto schema capsule hoặc None
     )> {
-        let shape_obj = numpy_array.getattr("shape")?;
-        let shape: (usize, usize, usize) = shape_obj.extract()?;
-        let (height, width, _channels) = shape;
-
-        let data_ptr = numpy_array
-            .getattr("ctypes")?
-            .getattr("data")?
-            .extract::<usize>()?;
-
-        let raw_data =
-            unsafe { std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) };
-
-        // Tiền xử lý ảnh
-        let t_pre = Instant::now();
-        let input_array = crate::image_proc::preprocess_image_kornia(
-            raw_data,
-            width,
-            height,
-            self.input_width,
-            self.input_height,
-        )
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Preprocessing failed: {}",
-                e
-            ))
-        })?;
-        self.last_preprocess_ms = t_pre.elapsed().as_secs_f64() * 1000.0;
-
+        let (width, height, input_array) = self.prepare_input(numpy_array)?;
         let (detections, proto_flat) =
             self.run_inference_internal(py, input_array, (width, height))?;
 
@@ -301,34 +273,9 @@ impl YoloV8Detector {
     fn detect_from_numpy(
         &mut self,
         py: Python,
-        numpy_array: &Bound<pyo3::PyAny>,
+        numpy_array: &Bound<PyAny>,
     ) -> PyResult<Py<PyList>> {
-        let shape_obj = numpy_array.getattr("shape")?;
-        let shape: (usize, usize, usize) = shape_obj.extract()?;
-        let (height, width, _channels) = shape;
-
-        let data_ptr = numpy_array
-            .getattr("ctypes")?
-            .getattr("data")?
-            .extract::<usize>()?;
-
-        let raw_data =
-            unsafe { std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) };
-
-        let input_array = crate::image_proc::preprocess_image_kornia(
-            raw_data,
-            width,
-            height,
-            self.input_width,
-            self.input_height,
-        )
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                "Preprocessing failed: {}",
-                e
-            ))
-        })?;
-
+        let (width, height, input_array) = self.prepare_input(numpy_array)?;
         let (detections, _) = self.run_inference_internal(py, input_array, (width, height))?;
 
         let py_list = PyList::empty(py);
@@ -354,6 +301,40 @@ impl YoloV8Detector {
 
 /// Internal methods
 impl YoloV8Detector {
+    /// Helper chung lấy raw pointer và tiền xử lý ảnh từ numpy array
+    /// Gọi chung cho cả 2 hàm detect để loại bỏ 13 dòng code trùng lặp
+    #[inline]
+    fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize, Array4<f32>)> {
+        let shape_obj = numpy_array.getattr("shape")?;
+        let shape: (usize, usize, usize) = shape_obj.extract()?;
+        let (height, width, _channels) = shape;
+
+        let data_ptr = numpy_array
+            .getattr("ctypes")?
+            .getattr("data")?
+            .extract::<usize>()?;
+
+        let raw_data =
+            unsafe { std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) };
+
+        let t_pre = Instant::now();
+        let input_array = crate::image_proc::preprocess_image_kornia(
+            raw_data,
+            width,
+            height,
+            self.input_width,
+            self.input_height,
+        )
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Preprocessing failed: {}",
+                e
+            ))
+        })?;
+        self.last_preprocess_ms = t_pre.elapsed().as_secs_f64() * 1000.0;
+
+        Ok((width, height, input_array))
+    }
     /// Chạy inference và trả về (detections, Option<proto_flat>)
     fn run_inference_internal(
         &mut self,
@@ -438,7 +419,7 @@ impl YoloV8Detector {
             let nc = total_channels - 5;
             (nc, 0_usize, 0_usize, true)
         } else {
-            ((total_channels - 4), 0_usize, 0_usize, false)
+            (total_channels - 4, 0_usize, 0_usize, false)
         };
 
         self.num_classes = num_classes;
