@@ -1,3 +1,9 @@
+//! Common types for YOLO Inference Engine
+//!
+//! File này chứa các định nghĩa dùng chung giữa các phiên bản YOLO (v8, v26, ...):
+//! - Struct YoloDetection: Kết quả trả về cho mỗi đối tượng phát hiện được
+//! - Các hằng số hoặc tiện ích chung khác
+
 use pyo3::prelude::*;
 use ort::session::Session;
 use log::{info, warn};
