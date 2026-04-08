@@ -19,6 +19,34 @@ use pyo3::types::PyCapsule;
 const ARRAY_NAME: &[u8] = b"arrow_array\0";
 const SCHEMA_NAME: &[u8] = b"arrow_schema\0";
 
+/// Helper generic tạo PyCapsule bất kỳ kiểu dữ liệu Arrow
+/// Loại bỏ toàn bộ duplication code, giữ nguyên 100% behavior và an toàn bộ nhớ
+fn create_capsule<'py, T>(
+    py: Python<'py>,
+    value: T,
+    name: &[u8],
+    release: unsafe extern "C" fn(*mut pyo3::ffi::PyObject),
+) -> Bound<'py, PyCapsule> {
+    unsafe {
+        let ptr = Box::into_raw(Box::new(value));
+        let cap_ptr = PyCapsule_New(
+            ptr as *mut _,
+            name.as_ptr() as *const _,
+            Some(release),
+        );
+        Bound::from_owned_ptr(py, cap_ptr).cast_into_unchecked::<PyCapsule>()
+    }
+}
+
+/// Generic destructor chung cho tất cả các loại FFI Arrow
+/// Rust 2024: Không đánh dấu extern "C" vì không gọi trực tiếp từ C
+unsafe fn release_capsule<T>(capsule: *mut pyo3::ffi::PyObject, name: &[u8]) {
+    let ptr = unsafe { PyCapsule_GetPointer(capsule, name.as_ptr() as *const _) };
+    if !ptr.is_null() {
+        unsafe { let _ = Box::from_raw(ptr as *mut T); };
+    }
+}
+
 /// Export ArrayData Arrow thành 2 PyCapsule truyền sang Python
 /// Không có sao chép dữ liệu, chỉ truyền ownership con trỏ
 pub fn export_to_python<'py>(
@@ -30,46 +58,18 @@ pub fn export_to_python<'py>(
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow FFI Error: {}", e))
     })?;
 
-    let array_capsule = unsafe {
-        let ptr = Box::into_raw(Box::new(ffi_array));
-        let cap_ptr = PyCapsule_New(
-            ptr as *mut _,
-            ARRAY_NAME.as_ptr() as *const _,
-            Some(release_array),
-        );
-        Bound::from_owned_ptr(py, cap_ptr).cast_into_unchecked::<PyCapsule>()
-    };
-
-    let schema_capsule = unsafe {
-        let ptr = Box::into_raw(Box::new(ffi_schema));
-        let cap_ptr = PyCapsule_New(
-            ptr as *mut _,
-            SCHEMA_NAME.as_ptr() as *const _,
-            Some(release_schema),
-        );
-        Bound::from_owned_ptr(py, cap_ptr).cast_into_unchecked::<PyCapsule>()
-    };
+    let array_capsule = create_capsule(py, ffi_array, ARRAY_NAME, release_array);
+    let schema_capsule = create_capsule(py, ffi_schema, SCHEMA_NAME, release_schema);
 
     Ok((array_capsule, schema_capsule))
 }
 
 unsafe extern "C" fn release_array(capsule: *mut pyo3::ffi::PyObject) {
-    let ptr = unsafe { PyCapsule_GetPointer(capsule, ARRAY_NAME.as_ptr() as *const _) };
-    if !ptr.is_null() {
-        unsafe {
-            let _ = Box::from_raw(ptr as *mut FFI_ArrowArray);
-        };
-        // Destructor FFI_ArrowArray tự động gọi callback giải phóng bộ nhớ
-        // Không cần tự do thủ công các buffer bên trong
-    }
+    unsafe { release_capsule::<FFI_ArrowArray>(capsule, ARRAY_NAME) };
+    // Destructor FFI_ArrowArray tự động gọi callback giải phóng bộ nhớ
 }
 
 unsafe extern "C" fn release_schema(capsule: *mut pyo3::ffi::PyObject) {
-    let ptr = unsafe { PyCapsule_GetPointer(capsule, SCHEMA_NAME.as_ptr() as *const _) };
-    if !ptr.is_null() {
-        unsafe {
-            let _ = Box::from_raw(ptr as *mut FFI_ArrowSchema);
-        };
-        // Destructor FFI_ArrowSchema tự động giải phóng toàn bộ bộ nhớ schema
-    }
+    unsafe { release_capsule::<FFI_ArrowSchema>(capsule, SCHEMA_NAME) };
+    // Destructor FFI_ArrowSchema tự động giải phóng toàn bộ bộ nhớ schema
 }
