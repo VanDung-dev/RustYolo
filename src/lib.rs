@@ -22,6 +22,8 @@ pub use yolo::{YoloDetection, YoloV8Detector};
 #[pymodule]
 #[allow(unused_variables)]
 fn rust_yolo(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    pyo3_log::init();
+
     m.add_class::<PerformanceMonitor>()?;
     m.add_class::<YoloV8Detector>()?;
     m.add_class::<YoloDetection>()?;
