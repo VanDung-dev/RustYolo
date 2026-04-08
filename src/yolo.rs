@@ -6,7 +6,7 @@
 
 use pyo3::prelude::*;
 use ort::session::Session;
-use log::{info, warn};
+use log::{info};
 
 #[pyclass(from_py_object)]
 #[derive(Clone)]

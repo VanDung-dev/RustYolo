@@ -152,7 +152,8 @@ impl YoloV26Detector {
         let (arr_cap, sch_cap) = crate::ffi::export_to_python(py, struct_array.to_data())?;
         
         let (p_arr, p_sch) = if let Some(p) = results.proto {
-            let proto_array = Float32Array::from(p.into_raw_vec());
+            let (raw_vec, _) = p.into_raw_vec_and_offset();
+            let proto_array = Float32Array::from(raw_vec);
             let (pa, ps) = crate::ffi::export_to_python(py, proto_array.to_data())?;
             (pa.into_any().unbind(), ps.into_any().unbind())
         } else {
