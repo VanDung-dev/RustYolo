@@ -10,7 +10,7 @@ use arrow::array::{Array, Float32Array, Int32Array, StructArray};
 use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
 use ndarray::Array4;
-use ort::execution_providers::{CoreML, CUDA, ExecutionProvider};
+use ort::execution_providers::{coreml, cuda, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
@@ -91,12 +91,11 @@ impl YoloV8Detector {
                 ))
             })?
             .with_execution_providers(execution_providers)
-            .map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to enable execution providers: {}",
-                    e
-                ))
-            })?
+            .unwrap_or_else(|e| {
+                warn!("⚠️ Không thể kích hoạt hardware accelerator: {}", e);
+                warn!("⚠️ Đang lùi về chế độ CPU");
+                Session::builder().unwrap()
+            })
             .commit_from_file(model_path)
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
