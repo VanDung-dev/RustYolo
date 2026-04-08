@@ -13,10 +13,12 @@ use pyo3::prelude::*;
 mod ffi;
 pub mod image_proc;
 mod monitor;
+mod v8;
 mod yolo;
 
 pub use monitor::PerformanceMonitor;
-pub use yolo::{YoloDetection, YoloV8Detector};
+pub use v8::YoloV8Detector;
+pub use yolo::YoloDetection;
 
 /// Khởi tạo module
 #[pymodule]
