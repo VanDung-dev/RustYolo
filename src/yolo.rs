@@ -1,12 +1,6 @@
-//! Common types for YOLO Inference Engine
-//!
-//! File này chứa các định nghĩa dùng chung giữa các phiên bản YOLO (v8, v26, ...):
-//! - Struct YoloDetection: Kết quả trả về cho mỗi đối tượng phát hiện được
-//! - Các hằng số hoặc tiện ích chung khác
-
 use pyo3::prelude::*;
 use ort::session::Session;
-use log::info;
+use log::{info, warn};
 
 #[pyclass(from_py_object)]
 #[derive(Clone)]
@@ -64,14 +58,14 @@ impl YoloDetection {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YoloArchitecture {
     V8, // YOLOv8, v11 (Anchor-based + NMS)
     V26, // YOLOv26, v10 (NMS-Free)
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum YoloTask {
     Detection,
@@ -92,12 +86,12 @@ pub struct ModelConfig {
 
 impl ModelConfig {
     /// Tự động xác định cấu trúc model dựa trên filename và Session outputs
-    pub fn identify(path: &str, session: &Session) -> Self {
+    pub fn identify(path: &str, _session: &Session) -> Self {
         let name = path.to_lowercase();
         
         // 1. Xác định Kiến trúc (Arch)
         let mut arch = YoloArchitecture::V8;
-        if name.contains("v26") || name.contains("v10") || name.contains("nms-free") {
+        if name.contains("v26") || name.contains("26") || name.contains("v10") || name.contains("nms-free") {
             arch = YoloArchitecture::V26;
         }
 
@@ -118,6 +112,7 @@ impl ModelConfig {
         let mut num_classes = 80;
         let mut num_keypoints = 0;
         let mut num_mask_coeffs = 0;
+        let input_size = (640, 640);
 
         match task {
             YoloTask::Pose => {
@@ -134,14 +129,14 @@ impl ModelConfig {
         }
 
         info!(
-            "Identified Model: Arch={:?}, Task={:?}, path={}",
-            arch, task, path
+            "Identified Model: Arch={:?}, Task={:?}, Input={}x{}, path={}",
+            arch, task, input_size.0, input_size.1, path
         );
 
         Self {
             arch,
             task,
-            input_size: (640, 640),
+            input_size,
             num_classes,
             num_keypoints,
             num_mask_coeffs,
