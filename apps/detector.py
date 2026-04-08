@@ -12,6 +12,11 @@ Kiến trúc:
 import cv2
 import numpy as np
 import pyarrow as pa
+import logging
+
+# Cấu hình logger cho module
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Import trực tiếp Native Rust Engine đã biên dịch
 from rust_yolo import YoloV8Detector
@@ -98,7 +103,7 @@ class YoloDetector:
             return results_arrow.to_pylist(), timing
 
         except AttributeError as e:
-            print(f"Lỗi Arrow: {e}")
+            logger.error(f"Lỗi Arrow: {e}")
             return [], {}
 
     def annotate_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
@@ -158,8 +163,7 @@ class YoloDetector:
                 pts = np.array([
                     [int(kp[0]), int(kp[1])] for kp in det["keypoints"][:4]
                 ], np.int32).reshape((-1, 1, 2))
-                cv2.polylines(annotated, [pts], isClosed=True, color=(0, 255, 255), 
-                              thickness=2, lineType=cv2.LINE_AA)
+                cv2.polylines(annotated, [pts], isClosed=True, color=(0, 255, 255), thickness=2, lineType=cv2.LINE_AA)
 
                 # Label tại đỉnh đầu tiên
                 label_pos = (int(det["keypoints"][0][0]), int(det["keypoints"][0][1]) - 10)
