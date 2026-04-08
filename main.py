@@ -128,14 +128,13 @@ def run_camera_detection(
 ):
     # Kiểm tra sự tồn tại của file model
     if not os.path.exists(model_name):
-        logger.error(f"❌ Không tìm thấy file model: {model_name}")
-        print(f"\n❌ LỖI: Không tìm thấy file model '{model_name}'")
-        print("Vui lòng kiểm tra lại đường dẫn hoặc chạy script export_onnx_for_rust.py trước.\n")
+        logger.error(f"Không tìm thấy file model: {model_name}")
+        logger.error(f"Vui lòng kiểm tra lại đường dẫn hoặc chạy script export_onnx_for_rust.py trước.")
         sys.exit(1)
 
-    logger.info(f"🚀 Đang load model {model_name}...")
+    logger.info(f"Đang load model {model_name}...")
     detector = YoloDetector(model_name, confidence_threshold)
-    logger.info("✅ Model đã được load thành công!")
+    logger.info("Model đã được load thành công!")
 
     # Khởi động luồng Camera siêu tốc
     stream = VideoStream(src=camera_id, width=CAMERA_WIDTH, height=CAMERA_HEIGHT).start()
