@@ -1,0 +1,59 @@
+name: "CodeQL"
+
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - 'apps/**'
+      - 'src/**'
+      - 'main.py'
+      - 'export_onnx_for_rust.py'
+  pull_request:
+    branches: ["master"]
+    paths:
+      - 'apps/**'
+      - 'src/**'
+      - 'main.py'
+      - 'export_onnx_for_rust.py'
+  schedule:
+    - cron: "0 0 * * 0"
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          config: |
+            paths:
+              - apps/**
+              - src/**
+              - main.py
+              - export_onnx_for_rust.py
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:python"
+          output: sarif-results
+
+      - name: Upload SARIF as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-codeql-sarif
+          path: sarif-results
+          retention-days: 14
