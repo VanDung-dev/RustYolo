@@ -128,9 +128,7 @@ impl YoloV8Detector {
         Py<PyAny>,
         Py<PyAny>,
     )> {
-        let (width, height, input_array) = self.prepare_input(numpy_array)?;
-        let (detections, proto_flat) =
-            self.run_inference_internal(py, input_array, (width, height))?;
+        let (detections, proto_flat, _width, _height) = self.run_detection_pipeline(py, numpy_array)?;
 
         let class_ids = Int32Array::from(detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
         let confidences =
@@ -140,22 +138,8 @@ impl YoloV8Detector {
         let boxes_w = Float32Array::from(detections.iter().map(|d| d.width).collect::<Vec<_>>());
         let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
 
-        let mut fields: Vec<Field> = vec![
-            Field::new("class_id", DataType::Int32, false),
-            Field::new("confidence", DataType::Float32, false),
-            Field::new("x", DataType::Float32, false),
-            Field::new("y", DataType::Float32, false),
-            Field::new("w", DataType::Float32, false),
-            Field::new("h", DataType::Float32, false),
-        ];
-        let mut arrays: Vec<Arc<dyn Array>> = vec![
-            Arc::new(class_ids),
-            Arc::new(confidences),
-            Arc::new(boxes_x),
-            Arc::new(boxes_y),
-            Arc::new(boxes_w),
-            Arc::new(boxes_h),
-        ];
+        let mut fields = Self::build_default_arrow_fields();
+        let mut arrays = Self::build_default_arrow_arrays(class_ids, confidences, boxes_x, boxes_y, boxes_w, boxes_h);
 
         if self.num_keypoints > 0 {
             fields.push(Field::new(
@@ -163,17 +147,9 @@ impl YoloV8Detector {
                 DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
                 true,
             ));
-            let mut kp_builder =
-                arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
-            for det in &detections {
-                for (x, y, conf) in &det.keypoints {
-                    kp_builder.values().append_value(*x);
-                    kp_builder.values().append_value(*y);
-                    kp_builder.values().append_value(*conf);
-                }
-                kp_builder.append(true);
-            }
-            arrays.push(Arc::new(kp_builder.finish()));
+            arrays.push(Self::build_list_array(&detections, |det| {
+                det.keypoints.iter().flat_map(|&(x, y, conf)| [x, y, conf]).collect::<Vec<_>>().leak()
+            }));
         }
 
         if self.num_mask_coeffs > 0 {
@@ -182,15 +158,7 @@ impl YoloV8Detector {
                 DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
                 true,
             ));
-            let mut mc_builder =
-                arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
-            for det in &detections {
-                for c in &det.mask_coeffs {
-                    mc_builder.values().append_value(*c);
-                }
-                mc_builder.append(true);
-            }
-            arrays.push(Arc::new(mc_builder.finish()));
+            arrays.push(Self::build_list_array(&detections, |det| &det.mask_coeffs));
         }
 
         let struct_array =
@@ -217,8 +185,7 @@ impl YoloV8Detector {
         py: Python,
         numpy_array: &Bound<PyAny>,
     ) -> PyResult<Py<PyList>> {
-        let (width, height, input_array) = self.prepare_input(numpy_array)?;
-        let (detections, _) = self.run_inference_internal(py, input_array, (width, height))?;
+        let (detections, _, _width, _height) = self.run_detection_pipeline(py, numpy_array)?;
 
         let py_list = PyList::empty(py);
         for det in detections {
@@ -242,6 +209,68 @@ impl YoloV8Detector {
 }
 
 impl YoloV8Detector {
+    // Helper functions to eliminate code duplication
+    #[inline]
+    fn build_default_arrow_fields() -> Vec<Field> {
+        vec![
+            Field::new("class_id", DataType::Int32, false),
+            Field::new("confidence", DataType::Float32, false),
+            Field::new("x", DataType::Float32, false),
+            Field::new("y", DataType::Float32, false),
+            Field::new("w", DataType::Float32, false),
+            Field::new("h", DataType::Float32, false),
+        ]
+    }
+
+    #[inline]
+    fn build_default_arrow_arrays(class_ids: Int32Array, confidences: Float32Array, boxes_x: Float32Array, boxes_y: Float32Array, boxes_w: Float32Array, boxes_h: Float32Array) -> Vec<Arc<dyn Array>> {
+        vec![
+            Arc::new(class_ids),
+            Arc::new(confidences),
+            Arc::new(boxes_x),
+            Arc::new(boxes_y),
+            Arc::new(boxes_w),
+            Arc::new(boxes_h),
+        ]
+    }
+
+    #[inline]
+    fn build_list_array<F, T>(detections: &[YoloDetection], mut extractor: F) -> Arc<dyn Array>
+    where
+        F: FnMut(&YoloDetection) -> &[T],
+        T: Into<f32> + Copy,
+    {
+        let mut builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
+        for det in detections {
+            for value in extractor(det) {
+                builder.values().append_value((*value).into());
+            }
+            builder.append(true);
+        }
+        Arc::new(builder.finish())
+    }
+
+    #[inline]
+    fn create_empty_detection(class_id: i32, confidence: f32) -> YoloDetection {
+        YoloDetection {
+            class_id,
+            confidence,
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+            keypoints: vec![],
+            mask_coeffs: vec![],
+        }
+    }
+
+    #[inline]
+    fn run_detection_pipeline<'py>(&mut self, py: Python<'py>, numpy_array: &Bound<'py, PyAny>) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>, usize, usize)> {
+        let (width, height, input_array) = self.prepare_input(numpy_array)?;
+        let (detections, proto_flat) = self.run_inference_internal(py, input_array, (width, height))?;
+        Ok((detections, proto_flat, width, height))
+    }
+
     #[inline]
     fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize, Array4<f32>)> {
         let shape_obj = numpy_array.getattr("shape")?;
@@ -483,13 +512,7 @@ impl YoloV8Detector {
         indexed
             .into_iter()
             .take(5)
-            .map(|(idx, prob)| YoloDetection {
-                class_id: idx as i32,
-                confidence: prob,
-                x: 0.0, y: 0.0, width: 0.0, height: 0.0,
-                keypoints: vec![],
-                mask_coeffs: vec![],
-            })
+            .map(|(idx, prob)| Self::create_empty_detection(idx as i32, prob))
             .collect()
     }
 }
