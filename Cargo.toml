@@ -16,7 +16,7 @@ log = "0.4"
 pyo3-log = "0.13.3"
 
 # ONNX Runtime
-ort = { version = "2.0.0-rc.12", features = ["coreml"] }
+ort = { version = "2.0.0-rc.12", features = ["coreml", "cuda"] }
 ndarray = "0.17"
 rayon = "1.10"
 kornia-image = "0.1"

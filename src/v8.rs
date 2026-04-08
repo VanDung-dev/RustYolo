@@ -10,7 +10,7 @@ use arrow::array::{Array, Float32Array, Int32Array, StructArray};
 use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
 use ndarray::Array4;
-use ort::execution_providers::{CoreML, ExecutionProvider};
+use ort::execution_providers::{CoreML, CUDA, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
@@ -49,10 +49,38 @@ impl YoloV8Detector {
         debug!("YoloV8Detector::new called with model: {}", model_path);
         
 
-        if !CoreML::default().is_available().unwrap_or(false) {
-            warn!("CoreML không khả dụng. Đang lùi về CPU.");
+        let mut execution_providers = Vec::new();
+
+        // ✅ NVIDIA CUDA Execution Provider - ưu tiên hàng đầu nếu có
+        if CUDA::default().is_available().unwrap_or(false) {
+            info!("✅ NVIDIA CUDA khả dụng! Đang kích hoạt tăng tốc GPU RTX...");
+            
+            // Cấu hình tối ưu đặc biệt cho RTX 2050 (Turing Architecture 7.5)
+            let cuda_provider = CUDA::default()
+                .with_device_id(0)
+                .with_cuda_graph(true)
+                .build();
+                
+            execution_providers.push(cuda_provider);
         } else {
-            info!("CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng...");
+            warn!("⚠️ NVIDIA CUDA không khả dụng");
+        }
+
+        // ✅ Apple CoreML Execution Provider - cho Silicon
+        if CoreML::default().is_available().unwrap_or(false) {
+            info!("✅ CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng Apple...");
+            let coreml_provider = CoreML::default()
+                .with_subgraphs(true)
+                .with_compute_units(ort::execution_providers::coreml::ComputeUnits::All)
+                .build();
+            
+            execution_providers.push(coreml_provider);
+        } else {
+            warn!("⚠️ CoreML không khả dụng");
+        }
+
+        if execution_providers.is_empty() {
+            warn!("⚠️ Không tìm thấy backend tăng tốc phần cứng nào, đang chạy trên CPU");
         }
 
         let session = Session::builder()
@@ -62,13 +90,10 @@ impl YoloV8Detector {
                     e
                 ))
             })?
-            .with_execution_providers([CoreML::default()
-                .with_subgraphs(true)
-                .with_compute_units(ort::execution_providers::coreml::ComputeUnits::All)
-                .build()])
+            .with_execution_providers(execution_providers)
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to enable CoreML: {}",
+                    "Failed to enable execution providers: {}",
                     e
                 ))
             })?
