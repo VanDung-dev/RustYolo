@@ -18,12 +18,14 @@ use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyList};
 use std::sync::Arc;
 use std::time::Instant;
+use tract_onnx::prelude::*;
 
-use crate::yolo::{YoloDetection, ModelConfig, YoloTask};
+use crate::yolo::{ModelConfig, YoloDetection, YoloTask};
 
 #[pyclass]
 pub struct YoloV8Detector {
-    session: Session,
+    pub session: Option<Session>,
+    pub tract_model: Option<Arc<TypedModel>>,
 
     input_width: usize,
     input_height: usize,
@@ -41,6 +43,8 @@ pub struct YoloV8Detector {
     pub last_inference_ms: f64,
     #[pyo3(get)]
     pub last_nms_ms: f64,
+    #[pyo3(get)]
+    pub use_tract: bool,
 }
 
 #[pymethods]
@@ -49,8 +53,17 @@ impl YoloV8Detector {
     #[pyo3(signature = (model_path, conf_threshold=0.25, iou_threshold=0.45))]
     fn new(model_path: &str, conf_threshold: f32, iou_threshold: f32) -> PyResult<Self> {
         debug!("YoloV8Detector::new called with model: {}", model_path);
-        
 
+        // Thử khởi tạo Tract với CUDA trước
+        let use_tract = Self::try_init_tract(model_path).is_ok();
+
+        if use_tract {
+            info!("✅ Tract CUDA khả dụng! Đang sử dụng Tract engine cho NVIDIA GPU");
+        } else {
+            info!("ℹ️ Tract CUDA không khả dụng, fallback sang ORT");
+        }
+
+        // Khởi tạo ORT session (luôn có để fallback)
         let mut execution_providers = Vec::new();
 
         // ✅ ORT chỉ được sử dụng với CoreML trên Apple Silicon
@@ -61,7 +74,7 @@ impl YoloV8Detector {
                 .with_subgraphs(true)
                 .with_compute_units(ort::execution_providers::coreml::ComputeUnits::All)
                 .build();
-            
+
             execution_providers.push(coreml_provider);
         } else {
             warn!("⚠️ CoreML không khả dụng, ORT sẽ chạy trên CPU");
@@ -99,8 +112,22 @@ impl YoloV8Detector {
             config.arch, config.task, config.num_classes, config.input_size.0, config.input_size.1
         );
 
+        // Khởi tạo Tract model nếu có thể
+        let tract_model = if use_tract {
+            match Self::init_tract_model(model_path) {
+                Ok(model) => model,
+                Err(e) => {
+                    warn!("⚠️ Không thể khởi tạo Tract model: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
-            session,
+            session: Some(session),
+            tract_model,
             input_width: config.input_size.0,
             input_height: config.input_size.1,
             conf_threshold,
@@ -113,6 +140,7 @@ impl YoloV8Detector {
             last_preprocess_ms: 0.0,
             last_inference_ms: 0.0,
             last_nms_ms: 0.0,
+            use_tract,
         })
     }
 
@@ -133,14 +161,15 @@ impl YoloV8Detector {
     fn detect_to_arrow<'py>(
         &mut self,
         py: Python<'py>,
-        numpy_array: &Bound<'py,PyAny>,
+        numpy_array: &Bound<'py, PyAny>,
     ) -> PyResult<(
         Bound<'py, PyCapsule>,
         Bound<'py, PyCapsule>,
         Py<PyAny>,
         Py<PyAny>,
     )> {
-        let (detections, proto_flat, _width, _height) = self.run_detection_pipeline(py, numpy_array)?;
+        let (detections, proto_flat, _width, _height) =
+            self.run_detection_pipeline(py, numpy_array)?;
 
         let class_ids = Int32Array::from(detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
         let confidences =
@@ -151,7 +180,14 @@ impl YoloV8Detector {
         let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
 
         let mut fields = Self::build_default_arrow_fields();
-        let mut arrays = Self::build_default_arrow_arrays(class_ids, confidences, boxes_x, boxes_y, boxes_w, boxes_h);
+        let mut arrays = Self::build_default_arrow_arrays(
+            class_ids,
+            confidences,
+            boxes_x,
+            boxes_y,
+            boxes_w,
+            boxes_h,
+        );
 
         if self.num_keypoints > 0 {
             fields.push(Field::new(
@@ -160,7 +196,11 @@ impl YoloV8Detector {
                 true,
             ));
             arrays.push(Self::build_list_array(&detections, |det| {
-                det.keypoints.iter().flat_map(|&(x, y, conf)| [x, y, conf]).collect::<Vec<_>>().leak()
+                det.keypoints
+                    .iter()
+                    .flat_map(|&(x, y, conf)| [x, y, conf])
+                    .collect::<Vec<_>>()
+                    .leak()
             }));
         }
 
@@ -221,6 +261,29 @@ impl YoloV8Detector {
 }
 
 impl YoloV8Detector {
+    fn try_init_tract(model_path: &str) -> TractResult<()> {
+        let _model = tract_onnx::onnx()
+            .model_for_path(model_path)?
+            .with_input_fact(
+                0,
+                InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 3, 640, 640)),
+            )?
+            .into_optimized()?;
+        Ok(())
+    }
+
+    fn init_tract_model(model_path: &str) -> TractResult<Option<Arc<TypedModel>>> {
+        let model = tract_onnx::onnx()
+            .model_for_path(model_path)?
+            .with_input_fact(
+                0,
+                InferenceFact::dt_shape(f32::datum_type(), tvec!(1, 3, 640, 640)),
+            )?
+            .into_optimized()?;
+
+        Ok(Some(Arc::new(model)))
+    }
+
     // Helper functions to eliminate code duplication
     #[inline]
     fn build_default_arrow_fields() -> Vec<Field> {
@@ -235,7 +298,14 @@ impl YoloV8Detector {
     }
 
     #[inline]
-    fn build_default_arrow_arrays(class_ids: Int32Array, confidences: Float32Array, boxes_x: Float32Array, boxes_y: Float32Array, boxes_w: Float32Array, boxes_h: Float32Array) -> Vec<Arc<dyn Array>> {
+    fn build_default_arrow_arrays(
+        class_ids: Int32Array,
+        confidences: Float32Array,
+        boxes_x: Float32Array,
+        boxes_y: Float32Array,
+        boxes_w: Float32Array,
+        boxes_h: Float32Array,
+    ) -> Vec<Arc<dyn Array>> {
         vec![
             Arc::new(class_ids),
             Arc::new(confidences),
@@ -277,14 +347,22 @@ impl YoloV8Detector {
     }
 
     #[inline]
-    fn run_detection_pipeline<'py>(&mut self, py: Python<'py>, numpy_array: &Bound<'py, PyAny>) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>, usize, usize)> {
+    fn run_detection_pipeline<'py>(
+        &mut self,
+        py: Python<'py>,
+        numpy_array: &Bound<'py, PyAny>,
+    ) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>, usize, usize)> {
         let (width, height, input_array) = self.prepare_input(numpy_array)?;
-        let (detections, proto_flat) = self.run_inference_internal(py, input_array, (width, height))?;
+        let (detections, proto_flat) =
+            self.run_inference_internal(py, input_array, (width, height))?;
         Ok((detections, proto_flat, width, height))
     }
 
     #[inline]
-    fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize, Array4<f32>)> {
+    fn prepare_input(
+        &mut self,
+        numpy_array: &Bound<'_, PyAny>,
+    ) -> PyResult<(usize, usize, Array4<f32>)> {
         let shape_obj = numpy_array.getattr("shape")?;
         let shape: (usize, usize, usize) = shape_obj.extract()?;
         let (height, width, _channels) = shape;
@@ -341,7 +419,12 @@ impl YoloV8Detector {
 
         let t_infer = Instant::now();
         let outputs = py
-            .detach(|| self.session.run(ort::inputs![input_tensor]))
+            .detach(|| {
+                self.session
+                    .as_mut()
+                    .unwrap()
+                    .run(ort::inputs![input_tensor])
+            })
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                     "Inference failed: {}",
@@ -356,16 +439,20 @@ impl YoloV8Detector {
         })?;
 
         let shape_usize: Vec<usize> = out_extract.0.iter().map(|&d| d as usize).collect();
-        let out_data = ndarray::ArrayViewD::from_shape(shape_usize, out_extract.1).map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("ArrayView error: {}", e))
-        })?;
+        let out_data =
+            ndarray::ArrayViewD::from_shape(shape_usize, out_extract.1).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("ArrayView error: {}", e))
+            })?;
         let out_shape = out_data.shape();
 
         let proto_flat: Option<Vec<f32>> = if num_mask_coeffs > 0 {
             match outputs.get("output1") {
                 Some(v) => {
                     let t = v.try_extract_tensor::<f32>().map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Proto error: {}", e))
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                            "Proto error: {}",
+                            e
+                        ))
                     })?;
                     Some(t.1.to_vec())
                 }
@@ -434,9 +521,19 @@ impl YoloV8Detector {
                 let max_x = pts.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
                 let max_y = pts.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
 
-                (min_x * scale_x, min_y * scale_y, (max_x - min_x) * scale_x, (max_y - min_y) * scale_y)
+                (
+                    min_x * scale_x,
+                    min_y * scale_y,
+                    (max_x - min_x) * scale_x,
+                    (max_y - min_y) * scale_y,
+                )
             } else {
-                ((cx - w / 2.0) * scale_x, (cy - h / 2.0) * scale_y, w * scale_x, h * scale_y)
+                (
+                    (cx - w / 2.0) * scale_x,
+                    (cy - h / 2.0) * scale_y,
+                    w * scale_x,
+                    h * scale_y,
+                )
             };
 
             let x = final_x.clamp(0.0, orig_dim.0 as f32);
@@ -470,18 +567,25 @@ impl YoloV8Detector {
         let mut detections = Vec::with_capacity(all_boxes.len());
 
         for i in 0..all_boxes.len() {
-            if !keep[i] { continue; }
+            if !keep[i] {
+                continue;
+            }
             let (x, y, w, h, conf, class_id, ref kps, ref mcs) = all_boxes[i];
             detections.push(YoloDetection {
                 class_id: class_id as i32,
                 confidence: conf,
-                x, y, width: w, height: h,
+                x,
+                y,
+                width: w,
+                height: h,
                 keypoints: kps.clone(),
                 mask_coeffs: mcs.clone(),
             });
 
             for j in (i + 1)..all_boxes.len() {
-                if !keep[j] || all_boxes[j].5 != class_id { continue; }
+                if !keep[j] || all_boxes[j].5 != class_id {
+                    continue;
+                }
                 if Self::compute_iou_internal(&all_boxes[i], &all_boxes[j]) > iou_threshold {
                     keep[j] = false;
                 }
@@ -496,8 +600,26 @@ impl YoloV8Detector {
     }
 
     fn compute_iou_internal(
-        box1: &(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>),
-        box2: &(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>),
+        box1: &(
+            f32,
+            f32,
+            f32,
+            f32,
+            f32,
+            usize,
+            Vec<(f32, f32, f32)>,
+            Vec<f32>,
+        ),
+        box2: &(
+            f32,
+            f32,
+            f32,
+            f32,
+            f32,
+            usize,
+            Vec<(f32, f32, f32)>,
+            Vec<f32>,
+        ),
     ) -> f32 {
         let x1 = box1.0.max(box2.0);
         let y1 = box1.1.max(box2.1);
@@ -509,7 +631,11 @@ impl YoloV8Detector {
         let area2 = box2.2 * box2.3;
         let union = area1 + area2 - intersection;
 
-        if union == 0.0 { 0.0 } else { intersection / union }
+        if union == 0.0 {
+            0.0
+        } else {
+            intersection / union
+        }
     }
 
     fn decode_cls_output(out_data: &[f32], _num_classes: usize) -> Vec<YoloDetection> {
@@ -518,7 +644,8 @@ impl YoloV8Detector {
         let sum: f32 = exps.iter().sum();
         let probs: Vec<f32> = exps.iter().map(|x| x / sum).collect();
 
-        let mut indexed: Vec<(usize, f32)> = probs.iter().enumerate().map(|(i, &p)| (i, p)).collect();
+        let mut indexed: Vec<(usize, f32)> =
+            probs.iter().enumerate().map(|(i, &p)| (i, p)).collect();
         indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
         indexed
