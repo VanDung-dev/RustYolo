@@ -125,6 +125,7 @@ def run_camera_detection(
     model_name: str,
     camera_id: int = DEFAULT_CAMERA_ID,
     confidence_threshold: float = DEFAULT_CONFIDENCE,
+    execution_provider: str = "coreml",
 ):
     # Kiểm tra sự tồn tại của file model
     if not os.path.exists(model_name):
@@ -133,7 +134,7 @@ def run_camera_detection(
         sys.exit(1)
 
     logger.info(f"Đang load model {model_name}...")
-    detector = YoloDetector(model_name, confidence_threshold)
+    detector = YoloDetector(model_name, confidence_threshold, ep=execution_provider)
     logger.info("Model đã được load thành công!")
 
     # Khởi động luồng Camera siêu tốc
@@ -234,12 +235,17 @@ def main():
         "--conf", type=float, default=DEFAULT_CONFIDENCE, 
         help="Ngưỡng confidence (mặc định 0.5)"
     )
+    parser.add_argument(
+        "--ep", type=str, default="coreml",
+        help="Execution Provider (coreml, cuda, webgpu, cpu)"
+    )
     args = parser.parse_args()
     
     run_camera_detection(
         model_name=args.model, 
         camera_id=args.camera, 
-        confidence_threshold=args.conf
+        confidence_threshold=args.conf,
+        execution_provider=args.ep
     )
 
 
