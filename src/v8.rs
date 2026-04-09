@@ -10,7 +10,7 @@ use arrow::array::{Array, Float32Array, Int32Array, StructArray};
 use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
 use ndarray::Array4;
-use ort::execution_providers::{CoreML, ExecutionProvider};
+use ort::ep::{CoreML, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
@@ -18,7 +18,7 @@ use pyo3::types::{PyCapsule, PyList};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::yolo::{YoloDetection, ModelConfig, YoloTask};
+use crate::yolo::{YoloDetection, ModelConfig, YoloTask, ExecutionProviderType};
 
 #[pyclass]
 pub struct YoloV8Detector {
@@ -44,49 +44,121 @@ pub struct YoloV8Detector {
 #[pymethods]
 impl YoloV8Detector {
     #[new]
-    #[pyo3(signature = (model_path, conf_threshold=0.25, iou_threshold=0.45))]
-    fn new(model_path: &str, conf_threshold: f32, iou_threshold: f32) -> PyResult<Self> {
-        debug!("YoloV8Detector::new called with model: {}", model_path);
+    #[pyo3(signature = (model_path, conf_threshold=0.25, iou_threshold=0.45, execution_provider="coreml"))]
+    fn new(model_path: &str, conf_threshold: f32, iou_threshold: f32, execution_provider: &str) -> PyResult<Self> {
+        debug!("YoloV8Detector::new called with model: {}, execution_provider: {}", model_path, execution_provider);
         
-
-        if !CoreML::default().is_available().unwrap_or(false) {
-            warn!("CoreML không khả dụng. Đang lùi về CPU.");
-        } else {
-            info!("CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng...");
-        }
-
-        let session = Session::builder()
+        let ep = match execution_provider.to_lowercase().as_str() {
+            "coreml" => {
+                if !CoreML::default().is_available().unwrap_or(false) {
+                    warn!("⚠️ CoreML không khả dụng. Đang chuyển sang sử dụng CPU.");
+                    ExecutionProviderType::CPU
+                } else {
+                    info!("🍎 CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng...");
+                    ExecutionProviderType::CoreML
+                }
+            }
+            "cuda" => {
+                #[cfg(feature = "cuda")]
+                {
+                    if !ort::ep::CUDA::default().is_available().unwrap_or(false) {
+                        warn!("⚠️ CUDA không khả dụng. Đang chuyển sang sử dụng CPU.");
+                        ExecutionProviderType::CPU
+                    } else {
+                        info!("🚀 CUDA khả dụng! Đang sử dụng tăng tốc GPU NVIDIA...");
+                        ExecutionProviderType::CUDA
+                    }
+                }
+                #[cfg(not(feature = "cuda"))]
+                {
+                    warn!("⚠️ Tính năng CUDA không được bật trong bản build này. Đang chuyển sang sử dụng CPU.");
+                    ExecutionProviderType::CPU
+                }
+            }
+            "webgpu" => {
+                #[cfg(feature = "webgpu")]
+                {
+                    if !ort::ep::WebGPU::default().is_available().unwrap_or(false) {
+                        warn!("⚠️ WebGPU không khả dụng. Đang chuyển sang sử dụng CPU.");
+                        ExecutionProviderType::CPU
+                    } else {
+                        info!("🌐 WebGPU khả dụng! Đang sử dụng tăng tốc GPU đa nền tảng...");
+                        ExecutionProviderType::WebGPU
+                    }
+                }
+                #[cfg(not(feature = "webgpu"))]
+                {
+                    warn!("⚠️ Tính năng WebGPU không được bật trong bản build này. Đang chuyển sang sử dụng CPU.");
+                    ExecutionProviderType::CPU
+                }
+            }
+            "cpu" => ExecutionProviderType::CPU,
+            _ => {
+                warn!("Không rõ bộ thực thi '{}', đang chuyển sang sử dụng CPU.", execution_provider);
+                ExecutionProviderType::CPU
+            }
+        };
+        
+        let session_builder = Session::builder()
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to create session builder: {}",
+                    "Không thể tạo session builder: {}",
                     e
                 ))
-            })?
-            .with_execution_providers([CoreML::default()
-                .with_subgraphs(true)
-                .with_compute_units(ort::execution_providers::coreml::ComputeUnits::All)
-                .build()])
+            })?;
+        
+        let session_builder = match ep {
+            ExecutionProviderType::CoreML => {
+                session_builder.with_execution_providers([CoreML::default()
+                    .with_subgraphs(true)
+                    .with_compute_units(ort::ep::coreml::ComputeUnits::All)
+                    .build()])
+            }
+            ExecutionProviderType::CUDA => {
+                #[cfg(feature = "cuda")]
+                { session_builder.with_execution_providers([ort::ep::CUDA::default().build()]) }
+                #[cfg(not(feature = "cuda"))]
+                {
+                    warn!("Tính năng CUDA không khả dụng trên nền tảng này. Đang chuyển sang sử dụng CPU.");
+                    Ok(session_builder)
+                }
+            }
+            ExecutionProviderType::WebGPU => {
+                #[cfg(feature = "webgpu")]
+                { session_builder.with_execution_providers([ort::ep::WebGPU::default().build()]) }
+                #[cfg(not(feature = "webgpu"))]
+                {
+                    warn!("Tính năng WebGPU không được bật. Đang chuyển sang sử dụng CPU.");
+                    Ok(session_builder)
+                }
+            }
+            ExecutionProviderType::CPU => {
+                Ok(session_builder)
+            }
+        };
+        
+        let session = session_builder
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to enable CoreML: {}",
+                    "Không thể kích hoạt bộ thực thi: {}",
                     e
                 ))
             })?
             .commit_from_file(model_path)
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
-                    "Failed to load model from {}: {}",
+                    "Không thể tải model từ {}: {}",
                     model_path, e
                 ))
             })?;
-
+        
         let config = ModelConfig::identify(model_path, &session);
-
+        
         info!(
-            "Model config: arch={:?}, task={:?}, classes={}, input={}x{}",
+            "Cấu hình Model: kiến trúc={:?}, nhiệm vụ={:?}, số lớp={}, đầu vào={}x{}",
             config.arch, config.task, config.num_classes, config.input_size.0, config.input_size.1
         );
-
+        
         Ok(Self {
             session,
             input_width: config.input_size.0,
