@@ -2,10 +2,12 @@
 rustflags = [
     "-C", "link-arg=-undefined",
     "-C", "link-arg=dynamic_lookup",
+    "-C", "link-arg=-Wl,-rpath,@loader_path",
 ]
 
 [target.x86_64-apple-darwin]
 rustflags = [
     "-C", "link-arg=-undefined",
     "-C", "link-arg=dynamic_lookup",
+    "-C", "link-arg=-Wl,-rpath,@loader_path",
 ]
