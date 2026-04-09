@@ -16,7 +16,13 @@ log = "0.4"
 pyo3-log = "0.13.3"
 
 # ONNX Runtime
-ort = { version = "2.0.0-rc.12", features = ["coreml", "cuda"] }
+ort = { version = "2.0.0-rc.12", features = ["coreml"] }
+
+# Tract ONNX Runtime (cho CUDA NVIDIA)
+tract-onnx = "0.21.15"
+tract-core = "0.21.15"
+tract-cuda = "0.23.0-dev.3"
+
 ndarray = "0.17"
 rayon = "1.10"
 kornia-image = "0.1"

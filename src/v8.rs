@@ -11,7 +11,6 @@ use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
 use ndarray::Array4;
 use ort::ep::ExecutionProvider;
-use ort::execution_providers::cuda::CUDA;
 use ort::execution_providers::coreml::CoreML;
 use ort::session::Session;
 use ort::value::Value;
@@ -25,6 +24,7 @@ use crate::yolo::{YoloDetection, ModelConfig, YoloTask};
 #[pyclass]
 pub struct YoloV8Detector {
     session: Session,
+
     input_width: usize,
     input_height: usize,
     conf_threshold: f32,
@@ -53,24 +53,10 @@ impl YoloV8Detector {
 
         let mut execution_providers = Vec::new();
 
-        // ✅ NVIDIA CUDA Execution Provider - ưu tiên hàng đầu nếu có
-        if CUDA::default().is_available().unwrap_or(false) {
-            info!("✅ NVIDIA CUDA khả dụng! Đang kích hoạt tăng tốc GPU RTX...");
-            
-            // Cấu hình tối ưu đặc biệt cho RTX 2050 (Turing Architecture 7.5)
-            let cuda_provider = CUDA::default()
-                .with_device_id(0)
-                .with_cuda_graph(true)
-                .build();
-                
-            execution_providers.push(cuda_provider);
-        } else {
-            warn!("⚠️ NVIDIA CUDA không khả dụng");
-        }
-
-        // ✅ Apple CoreML Execution Provider - cho Silicon
+        // ✅ ORT chỉ được sử dụng với CoreML trên Apple Silicon
+        // CUDA sẽ được xử lý riêng bằng Tract engine chuyên biệt
         if CoreML::default().is_available().unwrap_or(false) {
-            info!("✅ CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng Apple...");
+            info!("✅ CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng Apple qua ORT...");
             let coreml_provider = CoreML::default()
                 .with_subgraphs(true)
                 .with_compute_units(ort::execution_providers::coreml::ComputeUnits::All)
@@ -78,7 +64,7 @@ impl YoloV8Detector {
             
             execution_providers.push(coreml_provider);
         } else {
-            warn!("⚠️ CoreML không khả dụng");
+            warn!("⚠️ CoreML không khả dụng, ORT sẽ chạy trên CPU");
         }
 
         if execution_providers.is_empty() {
