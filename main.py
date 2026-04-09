@@ -38,32 +38,52 @@ logger = logging.getLogger(__name__)
 class VideoStream:
     """Threaded video capture stream to handle I/O without blocking"""
     def __init__(self, src=0, width=1920, height=1080):
-        self.stream = cv2.VideoCapture(src)
+        # On Windows, MSMF can be buggy with CUDA/GPU loads. 
+        # CAP_DSHOW is often more stable as a fallback.
+        if os.name == 'nt':
+            self.stream = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+            if not self.stream.isOpened():
+                self.stream = cv2.VideoCapture(src, cv2.CAP_MSMF)
+        else:
+            self.stream = cv2.VideoCapture(src)
         
-        # Cấu hình camera độ phân giải cao và 60fps (tuỳ phần cứng)
+        if not self.stream.isOpened():
+            logger.error(f"❌ Không thể mở camera {src}")
+            self.grabbed = False
+            self.frame = None
+            self.stopped = True
+            return
+
+        # Cấu hình camera độ phân giải cao và 60fps
+        # Thứ tự set property rất quan trọng trên một số backend
+        self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.stream.set(cv2.CAP_PROP_FPS, 60)
         self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        self.stream.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-        self.stream.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+        
+        # Đợi một chút để driver ổn định sau khi set config
+        time.sleep(0.5)
 
         (self.grabbed, self.frame) = self.stream.read()
         self.stopped = False
         self.lock = threading.Lock()
 
     def start(self):
+        if not self.stream.isOpened():
+            return self
         t = threading.Thread(target=self.update, args=())
         t.daemon = True
         t.start()
         return self
 
     def update(self):
-        while True:
-            if self.stopped:
-                return
+        while not self.stopped:
             (grabbed, frame) = self.stream.read()
+            if not grabbed:
+                # Nếu mất frame (vấn đề MSMF/CUDA), thử đợi một chút thay vì loop vô tận
+                time.sleep(0.01)
+                continue
             with self.lock:
                 self.grabbed = grabbed
                 self.frame = frame
@@ -74,7 +94,8 @@ class VideoStream:
 
     def stop(self):
         self.stopped = True
-        self.stream.release()
+        if hasattr(self, 'stream'):
+            self.stream.release()
 
 
 def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
