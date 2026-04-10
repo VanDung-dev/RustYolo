@@ -5,6 +5,7 @@ Main entry point - File chạy chính (Đã tối ưu High-Performance Multi-thr
 
 import os
 import sys
+import platform
 import time
 import threading
 import queue
@@ -145,6 +146,26 @@ def run_camera_detection(
         logger.error(f"Không thể mở camera với ID {camera_id}")
         sys.exit(1)
 
+    # 0. Xác định độ phân giải màn hình để scale UI hợp lý
+    screen_w, screen_h = 1920, 1080 # Mặc định
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        root.destroy()
+        
+        # Đặc biệt cho macOS: Logical pixels thường nhỏ hơn physical pixels (Retina)
+        # Chúng ta sẽ ưu tiên giữ nguyên kích thước cho dòng Mac đời mới
+        if platform.system() == "Darwin":
+            logger.info(f"🍎 macOS Detected: {screen_w}x{screen_h} (Logical). Tự động tối ưu cho Retina...")
+            # Virtualize screen_w for Mac to avoid unnecessary scaling
+            screen_w = 2880 if screen_w >= 1440 else screen_w
+        else:
+            logger.info(f"🖥️ Phát hiện độ phân giải màn hình: {screen_w}x{screen_h}")
+    except Exception:
+        logger.warning("⚠️ Không thể lấy độ phân giải màn hình, dùng mặc định 1080p")
+
     # Queue giao tiếp Multi-threading
     frame_queue = queue.Queue(maxsize=1)
     result_queue = queue.Queue(maxsize=1)
@@ -205,8 +226,22 @@ def run_camera_detection(
             # Ghép frame và stats panel
             combined_frame = np.hstack((annotated_frame, stats_panel))
 
+            # Tự động scale lại nếu màn hình không đủ lớn (Tránh mất Stats Panel)
+            # Nếu màn hình nhỏ hơn 2560x1440 (2.5K), giới hạn chiều rộng hiển thị 1600px
+            if screen_w < 2560:
+                screen_max_w = 1600 
+                curr_h, curr_w = combined_frame.shape[:2]
+                
+                if curr_w > screen_max_w:
+                    scale = screen_max_w / curr_w
+                    new_w = int(curr_w * scale)
+                    new_h = int(curr_h * scale)
+                    combined_frame = cv2.resize(combined_frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
             # Hiển thị
-            cv2.imshow("YOLOv8 Object Detection (Multi-Threaded) - Rust Engine", combined_frame)
+            window_name = "YOLO Edge AI - Rust Engine Performance"
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.imshow(window_name, combined_frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
