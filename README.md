@@ -1,21 +1,20 @@
-# Rust YOLO Edge AI
+# Rust YOLO Edge AI — High-Performance Inference Engine
 
-Tối ưu mô hình YOLO hiệu suất cao cho Apple Silicon với kiến trúc lai Rust + Python.
+Tối ưu mô hình YOLO hiệu suất cao, đa nền tảng với kiến trúc lai **Rust + Python**. Dự án hỗ trợ tối đa tăng tốc phần cứng thông qua **CoreML** (cho Apple Silicon) và chính thức hỗ trợ **WebGPU** cho Windows, Linux và Mac.
 
 ---
 
 ## 🚀 Đặc điểm kỹ thuật
 
-| Đặc tính | Giá trị                                     |
-|---|---------------------------------------------|
-| Kiến trúc | Hybrid Rust + Python                        |
-| Inference Engine | ONNX Runtime + CoreML Hardware Acceleration |
-| Data Transfer | Apache Arrow C Data Interface **Zero Copy** |
-| Đa luồng | Rayon data parallelism                      |
-| Xử lý ảnh | Kornia CPU optimized                        |
-| Monitoring | Native macOS system telemetry               |
-| Latency yolov8n | ~23.5ms / frame (M4 Pro)                    |
-| Latency yolov8x | ~60.5ms / frame (M4 Pro)                    |
+| Đặc tính | Giá trị                                               |
+|---|-------------------------------------------------------|
+| Kiến trúc | Hybrid Rust + Python (Phối hợp hiệu năng & linh hoạt) |
+| Inference Engine | ONNX Runtime + CoreML / WebGPU (Vulkan, DX, Metal)    |
+| Data Transfer | Apache Arrow C Data Interface **Zero Copy**           |
+| Đa luồng | Rayon data parallelism (NMS & Preprocess)             |
+| Xử lý ảnh | Kornia CPU optimized (SIMD acceleration)              |
+| Monitoring | Native System Telemetry (CPU, GPU, Thermal)           |
+| Latency yolov8n | ~23ms (CoreML), ~26ms (WebGPU) trên M4 Pro            |
 
 ---
 
@@ -102,20 +101,46 @@ stateDiagram-v2
 ## 🛠️ Cài đặt và triển khai
 
 ### 1. Yêu cầu hệ thống
-- macOS 13.0+ (Apple Silicon ARM64)
-- Python 3.12+
-- Rust 1.94+
+
+*   **Hệ điều hành**:
+
+    *   **macOS**: 13.0+ (Khuyến nghị Apple Silicon ARM64).
+    *   **Windows**: Windows 10/11 (64-bit).
+    *   **Linux**: Ubuntu 22.04 LTS trở lên.
+
+*   **Môi trường lập trình**:
+
+    *   **Python**: 3.12+ (Hỗ trợ tốt nhất cho Windows DLL loading).
+    *   **Rust**: 1.94+ (Edition 2024).
 
 ### 2. Cài đặt dependencies
-```bash
-# Python
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
 
-# Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+1. Tạo môi trường ảo (Python venv)
+
+    ```bash
+    python -m venv .venv
+    ```
+
+2. Kích hoạt môi trường ảo
+
+    ```bash
+    # Cho macOS / Linux:
+    source .venv/bin/activate
+   
+    # Cho Windows:
+    .venv\Scripts\activate
+    ```
+
+3. Cài đặt các thư viện Python
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4. Cài đặt Rust (Biên dịch Engine)
+
+* Truy cập https://rust-lang.org/learn/get-started/
+
 
 ### 3. Biên dịch Native Extension (Chọn 1 trong 3 kiểu build)
 
@@ -177,10 +202,11 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 * Full system monitoring: CPU, GPU, Memory, Thermal
 * Thermal gradient dT/dt realtime measurement
 * Full latency breakdown per stage
-* Hardware accelerated CoreML ANE / GPU
-* Zero copy data transfer
+* Hardware accelerated CoreML (Apple Neural Engine / GPU)
+* Native WebGPU support (Vulkan, Metal, DirectX 12)
+* Zero copy data transfer (Apache Arrow)
 * Thread safe background monitoring
-* Hỗ trợ toàn bộ dòng YOLOv8
+* Hỗ trợ toàn bộ dòng YOLO như v8, v11, v26
 * Adaptive Thermal Scheduling tự động điều tiết tải
 * Non-blocking UI luôn mượt 60fps
 
