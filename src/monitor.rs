@@ -34,6 +34,7 @@ pub struct PerformanceMonitor {
     prev_temp: f32,
     last_temp_update: Instant,
     dt_dt: f32, // degC/sec
+    gpu_name_cache: String,
 }
 
 #[pymethods]
@@ -61,6 +62,7 @@ impl PerformanceMonitor {
             prev_temp: 0.0,
             last_temp_update: Instant::now(),
             dt_dt: 0.0,
+            gpu_name_cache: String::new(),
         }
     }
 
@@ -110,17 +112,33 @@ impl PerformanceMonitor {
         self.frame_times.retain(|&t| now_sys - t < 1.0);
         self.fps = self.frame_times.len() as f64;
 
-        // Cập nhật chỉ số nhiệt độ
+        // Cập nhật chỉ số nhiệt độ và tìm tên GPU
         if let Ok(comp) = self.components.lock() {
-            // Tìm sensor nhiệt độ CPU / GPU từ danh sách sensor hệ thống
             let mut max_temp = 0.0;
+            let mut detected_gpu_name = String::new();
+
             for component in comp.iter() {
-                let name = component.label().to_lowercase();
-                if name.contains("cpu") || name.contains("gpu") || name.contains("die") {
+                let label = component.label();
+                let name_lower = label.to_lowercase();
+
+                // 1. Tìm nhiệt độ cao nhất
+                if name_lower.contains("cpu") || name_lower.contains("gpu") || name_lower.contains("die") || 
+                   name_lower.contains("package") || name_lower.contains("core") || name_lower.contains("soc") {
                     if component.temperature() > max_temp {
                         max_temp = component.temperature();
                     }
                 }
+
+                // 2. Cố gắng bắt tên GPU từ label (Ví dụ: "NVIDIA GeForce RTX 3060")
+                if name_lower.contains("gpu") || name_lower.contains("nvidia") || name_lower.contains("amd") || name_lower.contains("intel") {
+                    if detected_gpu_name.is_empty() {
+                        detected_gpu_name = label.to_string();
+                    }
+                }
+            }
+
+            if !detected_gpu_name.is_empty() {
+                self.gpu_name_cache = detected_gpu_name;
             }
 
             if max_temp > 0.0 {
@@ -208,20 +226,28 @@ impl PerformanceMonitor {
             .set_item(pyo3::intern!(py, "memory_usage"), memory_usage)
             .unwrap();
 
-        // Thông tin GPU Apple Silicon
-        // macOS không cung cấp API đọc trực tiếp GPU metrics nên ước lượng từ nhiệt độ CPU
+        // Thông tin GPU
         let gpu_info = PyDict::new(py);
+        
+        // Xác định tên GPU
+        let gpu_name = if cfg!(target_os = "macos") {
+            "Apple Silicon GPU".to_string()
+        } else if !self.gpu_name_cache.is_empty() {
+            self.gpu_name_cache.clone()
+        } else {
+            "Generic Accelerator GPU".to_string()
+        };
 
-        // Ước tính hiệu năng GPU dựa trên nhiệt độ và tải CPU
+        // Ước tính hiệu năng GPU dựa trên nhiệt độ và tải CPU (để đảm bảo luôn có số liệu hiển thị)
         let gpu_load = (cpu_usage * 0.85).clamp(0.0, 100.0);
-        let gpu_temp = self.current_temp + 2.5;
-        let gpu_power = 2.2 + (gpu_load / 100.0) * 18.0; // ✅ Phạm vi 2.2W idle -> 20W max
+        let gpu_temp = if self.current_temp > 0.0 { self.current_temp + 2.5 } else { 0.0 };
+        let gpu_power = 2.2 + (gpu_load / 100.0) * 18.0; 
 
         gpu_info
             .set_item(pyo3::intern!(py, "available"), true)
             .unwrap();
         gpu_info
-            .set_item(pyo3::intern!(py, "name"), "Apple Silicon GPU")
+            .set_item(pyo3::intern!(py, "name"), gpu_name)
             .unwrap();
         gpu_info
             .set_item(pyo3::intern!(py, "load"), gpu_load)

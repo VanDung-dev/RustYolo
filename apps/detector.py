@@ -18,6 +18,36 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Tự động tìm DLL cho Windows (Dành cho CUDA/WebGPU)
+import platform
+import os
+import sys
+if platform.system() == "Windows":
+    # Python 3.12+ tối ưu: Phải add_dll_directory trước khi import native module
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    
+    # Danh sách các đường dẫn tiềm năng chứa DLL (CUDA, WebGPU, v.v.)
+    dll_candidates = [
+        os.path.join(project_root, "target", "release"),
+        os.path.join(project_root, "target", "debug"),
+        # Thư mục chứa file thực thi python (đôi khi DLL được copy vào đây)
+        os.path.dirname(sys.executable),
+        # Thư mục hiện tại (apps/)
+        current_dir,
+    ]
+
+    for dll_path in dll_candidates:
+        if os.path.exists(dll_path):
+            try:
+                os.add_dll_directory(dll_path)
+                logger.debug(f"🪟 Windows (Py 3.12+): Đã nạp DLL từ {dll_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Không thể nạp DLL từ {dll_path}: {e}")
+
+    # Đảm bảo PATH cũng được cập nhật cho các thư viện cũ hơn (nếu có)
+    os.environ["PATH"] = ";".join(dll_candidates) + ";" + os.environ.get("PATH", "")
+
 # Import trực tiếp Native Rust Engine đã biên dịch
 from rust_yolo import YoloV8Detector, YoloV26Detector, YoloArchitecture
 
@@ -37,7 +67,7 @@ from apps.config import (
 class YoloDetector:
     """YOLOv8 Object / Pose / Segmentation Detector — Rust + Arrow zero-copy."""
 
-    def __init__(self, model_name: str = "yolov8n.onnx", confidence: float = 0.5):
+    def __init__(self, model_name: str = "yolov8n.onnx", confidence: float = 0.5, ep: str = "coreml"):
         self.model_name = model_name
         self.confidence = confidence
         self.input_w = 640
@@ -50,15 +80,16 @@ class YoloDetector:
         # Thử xác định architecture từ logic của Rust (nếu có thể gọi static)
         # Hoặc khởi tạo tạm và check config. Ở đây ta dùng logic string tương tự
         if "v26" in model_name.lower() or "26" in model_name.lower() or "v10" in model_name.lower():
-            logger.info(f"🚀 Khởi tạo YOLOv26 (NMS-Free) Engine cho: {model_name}")
-            self.detector = YoloV26Detector(model_name, conf_threshold=confidence)
+            logger.info(f"🚀 Khởi tạo YOLOv26 (NMS-Free) Engine cho: {model_name} (EP: {ep})")
+            self.detector = YoloV26Detector(model_name, conf_threshold=confidence, execution_provider=ep)
             self.arch = YoloArchitecture.V26
         else:
-            logger.info(f"🎯 Khởi tạo YOLOv8 (Anchor-based) Engine cho: {model_name}")
+            logger.info(f"🎯 Khởi tạo YOLOv8 (Anchor-based) Engine cho: {model_name} (EP: {ep})")
             self.detector = YoloV8Detector(
                 model_name,
                 conf_threshold=confidence,
                 iou_threshold=0.45,
+                execution_provider=ep,
             )
             self.arch = YoloArchitecture.V8
 

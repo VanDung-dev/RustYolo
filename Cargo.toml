@@ -25,3 +25,6 @@ kornia-imgproc = "0.1"
 [lib]
 name = "rust_yolo"
 crate-type = ["cdylib"]
+
+[features]
+webgpu = ["ort/webgpu"]

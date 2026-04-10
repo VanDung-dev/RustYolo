@@ -6,7 +6,20 @@
 
 use pyo3::prelude::*;
 use ort::session::Session;
-use log::{info, warn};
+
+use log::{info};
+
+/// Different execution providers available for ONNX Runtime
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionProviderType {
+    /// Apple CoreML (macOS only)
+    CoreML,
+    /// WebGPU (cross-platform graphics API, includes Vulkan/Metal/DirectX12)
+    WebGPU,
+    /// CPU fallback
+    CPU,
+}
 
 #[pyclass(from_py_object)]
 #[derive(Clone)]
@@ -135,7 +148,7 @@ impl ModelConfig {
         }
 
         info!(
-            "Identified Model: Arch={:?}, Task={:?}, Input={}x{}, path={}",
+            "Xác định Model: Kiến trúc={:?}, Nhiệm vụ={:?}, Đầu vào={}x{}, đường dẫn={}",
             arch, task, input_size.0, input_size.1, path
         );
 

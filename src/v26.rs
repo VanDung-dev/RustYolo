@@ -9,8 +9,9 @@
 
 use arrow::array::{Array, Float32Array, Int32Array, StructArray};
 use arrow::datatypes::{DataType, Field, Fields};
-use log::{debug, info};
+use log::{debug, info, warn};
 use ndarray::Array4;
+use ort::ep::{CoreML, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
@@ -18,7 +19,7 @@ use pyo3::types::{PyCapsule, PyList};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::yolo::{YoloDetection, ModelConfig, YoloTask};
+use crate::yolo::{YoloDetection, ModelConfig, YoloTask, ExecutionProviderType};
 
 #[pyclass]
 pub struct YoloV26Detector {
@@ -47,19 +48,77 @@ struct YoloResultsV26 {
 #[pymethods]
 impl YoloV26Detector {
     #[new]
-    #[pyo3(signature = (model_path, conf_threshold=0.25))]
-    fn new(model_path: &str, conf_threshold: f32) -> PyResult<Self> {
-        debug!("YoloV26Detector::new called with model: {}", model_path);
+    #[pyo3(signature = (model_path, conf_threshold=0.25, execution_provider="coreml"))]
+    fn new(model_path: &str, conf_threshold: f32, execution_provider: &str) -> PyResult<Self> {
+        debug!("YoloV26Detector::new called with model: {}, execution_provider: {}", model_path, execution_provider);
 
-        let session = Session::builder()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Session error: {}", e)))?
+        let ep = match execution_provider.to_lowercase().as_str() {
+            "coreml" => {
+                if !CoreML::default().is_available().unwrap_or(false) {
+                    warn!("⚠️ CoreML không khả dụng. Đang chuyển sang sử dụng CPU.");
+                    ExecutionProviderType::CPU
+                } else {
+                    info!("🍎 CoreML khả dụng! Đang kích hoạt tăng tốc phần cứng...");
+                    ExecutionProviderType::CoreML
+                }
+            }
+            "webgpu" => {
+                #[cfg(feature = "webgpu")]
+                {
+                    if !ort::ep::WebGPU::default().is_available().unwrap_or(false) {
+                        warn!("⚠️ WebGPU không khả dụng. Đang chuyển sang sử dụng CPU.");
+                        ExecutionProviderType::CPU
+                    } else {
+                        info!("🌐 WebGPU khả dụng! Đang sử dụng tăng tốc GPU đa nền tảng...");
+                        ExecutionProviderType::WebGPU
+                    }
+                }
+                #[cfg(not(feature = "webgpu"))]
+                {
+                    warn!("⚠️ Tính năng WebGPU không được bật trong bản build này. Đang chuyển sang sử dụng CPU.");
+                    ExecutionProviderType::CPU
+                }
+            }
+            "cpu" => ExecutionProviderType::CPU,
+            _ => {
+                warn!("Không rõ bộ thực thi '{}', đang chuyển sang sử dụng CPU.", execution_provider);
+                ExecutionProviderType::CPU
+            }
+        };
+        
+        let session_builder = Session::builder()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Lỗi khởi tạo Session: {}", e)))?;
+
+        let session_builder = match ep {
+            ExecutionProviderType::CoreML => {
+                session_builder.with_execution_providers([CoreML::default()
+                    .with_subgraphs(true)
+                    .with_compute_units(ort::ep::coreml::ComputeUnits::All)
+                    .build()])
+            }
+            ExecutionProviderType::WebGPU => {
+                #[cfg(feature = "webgpu")]
+                { session_builder.with_execution_providers([ort::ep::WebGPU::default().build()]) }
+                #[cfg(not(feature = "webgpu"))]
+                {
+                    warn!("Tính năng WebGPU không được bật. Đang chuyển sang sử dụng CPU.");
+                    Ok(session_builder)
+                }
+            }
+            ExecutionProviderType::CPU => {
+                Ok(session_builder)
+            }
+        };
+
+        let session = session_builder
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Lỗi cấu hình bộ thực thi: {}", e)))?
             .commit_from_file(model_path)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Load error: {}", e)))?;
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Lỗi tải model: {}", e)))?;
 
         let config = ModelConfig::identify(model_path, &session);
 
         info!(
-            "V26 Model Config: task={:?}, input={}x{}",
+            "Cấu hình Model V26: nhiệm vụ={:?}, đầu vào={}x{}",
             config.task, config.input_size.0, config.input_size.1
         );
 
@@ -152,7 +211,7 @@ impl YoloV26Detector {
         let (arr_cap, sch_cap) = crate::ffi::export_to_python(py, struct_array.to_data())?;
         
         let (p_arr, p_sch) = if let Some(p) = results.proto {
-            let proto_array = Float32Array::from(p.into_raw_vec());
+            let proto_array = Float32Array::from(p.into_raw_vec_and_offset().0);
             let (pa, ps) = crate::ffi::export_to_python(py, proto_array.to_data())?;
             (pa.into_any().unbind(), ps.into_any().unbind())
         } else {

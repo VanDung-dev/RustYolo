@@ -5,6 +5,7 @@ Main entry point - File chạy chính (Đã tối ưu High-Performance Multi-thr
 
 import os
 import sys
+import platform
 import time
 import threading
 import queue
@@ -125,6 +126,7 @@ def run_camera_detection(
     model_name: str,
     camera_id: int = DEFAULT_CAMERA_ID,
     confidence_threshold: float = DEFAULT_CONFIDENCE,
+    execution_provider: str = "coreml",
 ):
     # Kiểm tra sự tồn tại của file model
     if not os.path.exists(model_name):
@@ -133,7 +135,7 @@ def run_camera_detection(
         sys.exit(1)
 
     logger.info(f"Đang load model {model_name}...")
-    detector = YoloDetector(model_name, confidence_threshold)
+    detector = YoloDetector(model_name, confidence_threshold, ep=execution_provider)
     logger.info("Model đã được load thành công!")
 
     # Khởi động luồng Camera siêu tốc
@@ -143,6 +145,26 @@ def run_camera_detection(
     if stream.frame is None:
         logger.error(f"Không thể mở camera với ID {camera_id}")
         sys.exit(1)
+
+    # 0. Xác định độ phân giải màn hình để scale UI hợp lý
+    screen_w, screen_h = 1920, 1080 # Mặc định
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        root.destroy()
+        
+        # Đặc biệt cho macOS: Logical pixels thường nhỏ hơn physical pixels (Retina)
+        # Chúng ta sẽ ưu tiên giữ nguyên kích thước cho dòng Mac đời mới
+        if platform.system() == "Darwin":
+            logger.info(f"🍎 macOS Detected: {screen_w}x{screen_h} (Logical). Tự động tối ưu cho Retina...")
+            # Virtualize screen_w for Mac to avoid unnecessary scaling
+            screen_w = 2880 if screen_w >= 1440 else screen_w
+        else:
+            logger.info(f"🖥️ Phát hiện độ phân giải màn hình: {screen_w}x{screen_h}")
+    except Exception:
+        logger.warning("⚠️ Không thể lấy độ phân giải màn hình, dùng mặc định 1080p")
 
     # Queue giao tiếp Multi-threading
     frame_queue = queue.Queue(maxsize=1)
@@ -199,13 +221,40 @@ def run_camera_detection(
             # Lấy stats cached và hiển thị panel
             stats = monitor.get_stats()
             stats.update(stats_extra)
-            stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT)
+            
+            # Đảm bảo chiều cao Stats Panel luôn khớp tuyệt đối với Frame Camera
+            frame_h, frame_w = annotated_frame.shape[:2]
+            stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, frame_h)
+            
+            # Kiểm tra an toàn cuối cùng (Phòng trường hợp config bị ghi đè)
+            if stats_panel.shape[0] != frame_h:
+                stats_panel = cv2.resize(stats_panel, (STATS_PANEL_WIDTH, frame_h))
 
             # Ghép frame và stats panel
-            combined_frame = np.hstack((annotated_frame, stats_panel))
+            try:
+                combined_frame = np.hstack((annotated_frame, stats_panel))
+            except Exception as e:
+                logger.error(f"Lỗi ghép khung hình: Frame={annotated_frame.shape}, Stats={stats_panel.shape}")
+                logger.error(f"Chi tiết lỗi: {e}")
+                # Fallback: Chỉ hiển thị frame gốc nếu lỗi
+                combined_frame = annotated_frame
+
+            # Tự động scale lại nếu màn hình không đủ lớn (Tránh mất Stats Panel)
+            # Nếu màn hình nhỏ hơn 2560x1440 (2.5K), giới hạn chiều rộng hiển thị 1600px
+            if screen_w < 2560:
+                screen_max_w = 1600 
+                curr_h, curr_w = combined_frame.shape[:2]
+                
+                if curr_w > screen_max_w:
+                    scale = screen_max_w / curr_w
+                    new_w = int(curr_w * scale)
+                    new_h = int(curr_h * scale)
+                    combined_frame = cv2.resize(combined_frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
             # Hiển thị
-            cv2.imshow("YOLOv8 Object Detection (Multi-Threaded) - Rust Engine", combined_frame)
+            window_name = "YOLO Edge AI - Rust Engine Performance"
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.imshow(window_name, combined_frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
@@ -234,12 +283,17 @@ def main():
         "--conf", type=float, default=DEFAULT_CONFIDENCE, 
         help="Ngưỡng confidence (mặc định 0.5)"
     )
+    parser.add_argument(
+        "--ep", type=str, default="coreml",
+        help="Execution Provider (coreml, webgpu, cpu)"
+    )
     args = parser.parse_args()
     
     run_camera_detection(
         model_name=args.model, 
         camera_id=args.camera, 
-        confidence_threshold=args.conf
+        confidence_threshold=args.conf,
+        execution_provider=args.ep
     )
 
 

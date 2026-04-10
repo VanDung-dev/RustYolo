@@ -117,21 +117,43 @@ pip install -r requirements.txt
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-### 3. Build native extension
-```bash
-pip install maturin
-maturin develop --release
-```
+### 3. Biên dịch Native Extension (Chọn 1 trong 3 kiểu build)
+
+Dự án hỗ trợ 3 kiểu build tối ưu cho từng nền tảng phần cứng khác nhau:
+
+*   **Tối ưu cho Mac (M1/M2/M3/M4/M5)**
+    ```bash
+    maturin develop --release
+    ```
+
+*   **Đa nền tảng (Vulkan/Metal/DirectX) qua WebGPU**
+    ```bash
+    maturin develop --release --features webgpu
+    ```
 
 ### 4. Tải mô hình Yolo và chuyển đổi thành ONNX
 ```bash
 python export_onnx_for_rust.py # yolov8n
 ```
 
-### 5. Chạy demo camera
-```bash
-python main.py --model yolov8n.onnx # Mô hình Nano để test nhanh
-```
+### 5. Chạy demo
+
+Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep` (Execution Provider) tương ứng:
+
+*   **Chạy với CoreML (MacOS):**
+    ```bash
+    python main.py --model yolov8n.onnx --ep coreml
+    ```
+
+*   **Chạy với WebGPU (GPU đa nền tảng):**
+    ```bash
+    python main.py --model yolov8n.onnx --ep webgpu
+    ```
+
+*   **Chạy thuần CPU (Dùng cho máy không có GPU):**
+    ```bash
+    python main.py --model yolov8n.onnx --ep cpu
+    ```
 
 ---
 
