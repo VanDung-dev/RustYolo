@@ -221,10 +221,23 @@ def run_camera_detection(
             # Lấy stats cached và hiển thị panel
             stats = monitor.get_stats()
             stats.update(stats_extra)
-            stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT)
+            
+            # Đảm bảo chiều cao Stats Panel luôn khớp tuyệt đối với Frame Camera
+            frame_h, frame_w = annotated_frame.shape[:2]
+            stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, frame_h)
+            
+            # Kiểm tra an toàn cuối cùng (Phòng trường hợp config bị ghi đè)
+            if stats_panel.shape[0] != frame_h:
+                stats_panel = cv2.resize(stats_panel, (STATS_PANEL_WIDTH, frame_h))
 
             # Ghép frame và stats panel
-            combined_frame = np.hstack((annotated_frame, stats_panel))
+            try:
+                combined_frame = np.hstack((annotated_frame, stats_panel))
+            except Exception as e:
+                logger.error(f"Lỗi ghép khung hình: Frame={annotated_frame.shape}, Stats={stats_panel.shape}")
+                logger.error(f"Chi tiết lỗi: {e}")
+                # Fallback: Chỉ hiển thị frame gốc nếu lỗi
+                combined_frame = annotated_frame
 
             # Tự động scale lại nếu màn hình không đủ lớn (Tránh mất Stats Panel)
             # Nếu màn hình nhỏ hơn 2560x1440 (2.5K), giới hạn chiều rộng hiển thị 1600px
