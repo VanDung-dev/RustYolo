@@ -18,6 +18,36 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Tự động tìm DLL cho Windows (Dành cho CUDA/WebGPU)
+import platform
+import os
+import sys
+if platform.system() == "Windows":
+    # Python 3.12+ tối ưu: Phải add_dll_directory trước khi import native module
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    
+    # Danh sách các đường dẫn tiềm năng chứa DLL (CUDA, WebGPU, v.v.)
+    dll_candidates = [
+        os.path.join(project_root, "target", "release"),
+        os.path.join(project_root, "target", "debug"),
+        # Thư mục chứa file thực thi python (đôi khi DLL được copy vào đây)
+        os.path.dirname(sys.executable),
+        # Thư mục hiện tại (apps/)
+        current_dir,
+    ]
+
+    for dll_path in dll_candidates:
+        if os.path.exists(dll_path):
+            try:
+                os.add_dll_directory(dll_path)
+                logger.debug(f"🪟 Windows (Py 3.12+): Đã nạp DLL từ {dll_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Không thể nạp DLL từ {dll_path}: {e}")
+
+    # Đảm bảo PATH cũng được cập nhật cho các thư viện cũ hơn (nếu có)
+    os.environ["PATH"] = ";".join(dll_candidates) + ";" + os.environ.get("PATH", "")
+
 # Import trực tiếp Native Rust Engine đã biên dịch
 from rust_yolo import YoloV8Detector, YoloV26Detector, YoloArchitecture
 
