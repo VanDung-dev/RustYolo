@@ -76,6 +76,36 @@ impl YoloV8Detector {
                 }
             }
             "cpu" => ExecutionProviderType::CPU,
+            "cuda" => {
+                #[cfg(feature = "cuda")]
+                {
+                    // ORT CUDA auto-detection is broken, skip checking and force enable
+                    info!("🎮 NVIDIA CUDA EP đã được yêu cầu, bỏ qua kiểm tra khả dụng...");
+                    ExecutionProviderType::CUDA
+                }
+                #[cfg(not(feature = "cuda"))]
+                {
+                    warn!("⚠️ Tính năng CUDA không được bật trong bản build này. Đang chuyển sang sử dụng CPU.");
+                    ExecutionProviderType::CPU
+                }
+            }
+            "tensorrt" => {
+                #[cfg(feature = "tensorrt")]
+                {
+                    if !ort::ep::TensorRT::default().is_available().unwrap_or(false) {
+                        warn!("⚠️ TensorRT không khả dụng. Đang chuyển sang sử dụng CPU.");
+                        ExecutionProviderType::CPU
+                    } else {
+                        info!("🚀 NVIDIA TensorRT khả dụng! Đang kích hoạt tối ưu Jetson...");
+                        ExecutionProviderType::TensorRT
+                    }
+                }
+                #[cfg(not(feature = "tensorrt"))]
+                {
+                    warn!("⚠️ Tính năng TensorRT không được bật trong bản build này. Đang chuyển sang sử dụng CPU.");
+                    ExecutionProviderType::CPU
+                }
+            }
             _ => {
                 warn!("Không rõ bộ thực thi '{}', đang chuyển sang sử dụng CPU.", execution_provider);
                 ExecutionProviderType::CPU
@@ -109,6 +139,24 @@ impl YoloV8Detector {
             ExecutionProviderType::CPU => {
                 Ok(session_builder)
             }
+            #[cfg(feature = "cuda")]
+            ExecutionProviderType::CUDA => {
+                session_builder.with_execution_providers([ort::ep::CUDA::default()
+                    .with_device_id(0)
+                    .with_memory_limit(4 * 1024 * 1024 * 1024)
+                    .build()])
+            }
+            #[cfg(not(feature = "cuda"))]
+            ExecutionProviderType::CUDA => unreachable!("CUDA variant should not exist when feature is disabled"),
+            #[cfg(feature = "tensorrt")]
+            ExecutionProviderType::TensorRT => {
+                session_builder.with_execution_providers([ort::ep::TensorRT::default()
+                    .with_device_id(0)
+                    .with_max_workspace_size(2 * 1024 * 1024 * 1024)
+                    .build()])
+            }
+            #[cfg(not(feature = "tensorrt"))]
+            ExecutionProviderType::TensorRT => unreachable!("TensorRT variant should not exist when feature is disabled"),
         };
         
         let session = session_builder

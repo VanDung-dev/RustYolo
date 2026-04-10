@@ -19,6 +19,10 @@ pub enum ExecutionProviderType {
     WebGPU,
     /// CPU fallback
     CPU,
+    /// NVIDIA CUDA Execution Provider
+    CUDA,
+    /// NVIDIA TensorRT Execution Provider (Jetson optimized)
+    TensorRT,
 }
 
 #[pyclass(from_py_object)]

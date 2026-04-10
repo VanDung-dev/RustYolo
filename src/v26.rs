@@ -108,6 +108,24 @@ impl YoloV26Detector {
             ExecutionProviderType::CPU => {
                 Ok(session_builder)
             }
+            #[cfg(feature = "cuda")]
+            ExecutionProviderType::CUDA => {
+                session_builder.with_execution_providers([ort::ep::CUDA::default()
+                    .with_device_id(0)
+                    .with_memory_limit(4 * 1024 * 1024 * 1024)
+                    .build()])
+            }
+            #[cfg(not(feature = "cuda"))]
+            ExecutionProviderType::CUDA => unreachable!("CUDA variant should not exist when feature is disabled"),
+            #[cfg(feature = "tensorrt")]
+            ExecutionProviderType::TensorRT => {
+                session_builder.with_execution_providers([ort::ep::TensorRT::default()
+                    .with_device_id(0)
+                    .with_max_workspace_size(2 * 1024 * 1024 * 1024)
+                    .build()])
+            }
+            #[cfg(not(feature = "tensorrt"))]
+            ExecutionProviderType::TensorRT => unreachable!("TensorRT variant should not exist when feature is disabled"),
         };
 
         let session = session_builder

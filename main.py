@@ -285,7 +285,7 @@ def main():
     )
     parser.add_argument(
         "--ep", type=str, default="coreml",
-        help="Execution Provider (coreml, webgpu, cpu)"
+        help="Execution Provider (coreml, webgpu, cpu, cuda, tensorrt)"
     )
     args = parser.parse_args()
     

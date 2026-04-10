@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 # System Monitoring
 sysinfo = "0.32"
+nvml-wrapper = { version = "0.12.0", optional = true }
 
 # Arrow / Zero-Copy
 arrow = { version = "58.1.0", features = ["pyarrow", "ffi"] }
@@ -28,3 +29,5 @@ crate-type = ["cdylib"]
 
 [features]
 webgpu = ["ort/webgpu"]
+cuda = ["ort/cuda", "nvml-wrapper"]
+tensorrt = ["cuda", "ort/tensorrt"]
