@@ -1,0 +1,7 @@
+# Loại bỏ thư mục tests khi đóng gói (git archive / GitHub Releases)
+tests/ export-ignore
+.github/ export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore
+*.md export-ignore
+docs/ export-ignore
