@@ -126,12 +126,7 @@ Dự án hỗ trợ 3 kiểu build tối ưu cho từng nền tảng phần cứ
     maturin develop --release
     ```
 
-*   **Cho Windows/Linux có card NVIDIA (GTX/RTX)** (Thử nghiệm)
-    ```bash
-    maturin develop --release --features cuda
-    ```
-
-*   **Đa nền tảng (Vulkan/Metal/DirectX) qua WebGPU** (Thử nghiệm)
+*   **Đa nền tảng (Vulkan/Metal/DirectX) qua WebGPU**
     ```bash
     maturin develop --release --features webgpu
     ```
@@ -148,11 +143,6 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 *   **Chạy với CoreML (MacOS):**
     ```bash
     python main.py --model yolov8n.onnx --ep coreml
-    ```
-
-*   **Chạy với CUDA (NVIDIA GPU):**
-    ```bash
-    python main.py --model yolov8n.onnx --ep cuda
     ```
 
 *   **Chạy với WebGPU (GPU đa nền tảng):**

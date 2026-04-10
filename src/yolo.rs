@@ -15,8 +15,6 @@ use log::{info};
 pub enum ExecutionProviderType {
     /// Apple CoreML (macOS only)
     CoreML,
-    /// NVIDIA CUDA
-    CUDA,
     /// WebGPU (cross-platform graphics API, includes Vulkan/Metal/DirectX12)
     WebGPU,
     /// CPU fallback

@@ -58,23 +58,6 @@ impl YoloV8Detector {
                     ExecutionProviderType::CoreML
                 }
             }
-            "cuda" => {
-                #[cfg(feature = "cuda")]
-                {
-                    if !ort::ep::CUDA::default().is_available().unwrap_or(false) {
-                        warn!("⚠️ CUDA không khả dụng. Đang chuyển sang sử dụng CPU.");
-                        ExecutionProviderType::CPU
-                    } else {
-                        info!("🚀 CUDA khả dụng! Đang sử dụng tăng tốc GPU NVIDIA...");
-                        ExecutionProviderType::CUDA
-                    }
-                }
-                #[cfg(not(feature = "cuda"))]
-                {
-                    warn!("⚠️ Tính năng CUDA không được bật trong bản build này. Đang chuyển sang sử dụng CPU.");
-                    ExecutionProviderType::CPU
-                }
-            }
             "webgpu" => {
                 #[cfg(feature = "webgpu")]
                 {
@@ -113,15 +96,6 @@ impl YoloV8Detector {
                     .with_subgraphs(true)
                     .with_compute_units(ort::ep::coreml::ComputeUnits::All)
                     .build()])
-            }
-            ExecutionProviderType::CUDA => {
-                #[cfg(feature = "cuda")]
-                { session_builder.with_execution_providers([ort::ep::CUDA::default().build()]) }
-                #[cfg(not(feature = "cuda"))]
-                {
-                    warn!("Tính năng CUDA không khả dụng trên nền tảng này. Đang chuyển sang sử dụng CPU.");
-                    Ok(session_builder)
-                }
             }
             ExecutionProviderType::WebGPU => {
                 #[cfg(feature = "webgpu")]

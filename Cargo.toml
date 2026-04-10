@@ -27,5 +27,4 @@ name = "rust_yolo"
 crate-type = ["cdylib"]
 
 [features]
-cuda = ["ort/cuda"]
 webgpu = ["ort/webgpu"]
