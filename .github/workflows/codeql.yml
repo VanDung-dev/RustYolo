@@ -8,6 +8,11 @@ on:
       - 'src/**'
       - 'main.py'
       - 'export_onnx_for_rust.py'
+    paths-ignore:
+      - "**/*.md"
+      - "README.md"
+      - "src/README.md"
+      - "apps/README.md"
   pull_request:
     branches: ["master"]
     paths:
@@ -15,6 +20,11 @@ on:
       - 'src/**'
       - 'main.py'
       - 'export_onnx_for_rust.py'
+    paths-ignore:
+      - "**/*.md"
+      - "README.md"
+      - "src/README.md"
+      - "apps/README.md"
   schedule:
     - cron: "0 0 * * 0"
 
@@ -41,6 +51,8 @@ jobs:
               - src/**
               - main.py
               - export_onnx_for_rust.py
+            paths-ignore:
+              - "**/*.md"
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4
