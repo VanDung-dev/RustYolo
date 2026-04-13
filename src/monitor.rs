@@ -16,6 +16,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use sysinfo::{Components, CpuRefreshKind, RefreshKind, System};
 
+use crate::yolo::ExecutionProviderType;
+
 /// Struct quản lý monitoring hệ thống
 #[pyclass]
 pub struct PerformanceMonitor {
@@ -24,10 +26,12 @@ pub struct PerformanceMonitor {
     running: Arc<Mutex<bool>>,
     thread_handle: Option<thread::JoinHandle<()>>,
 
-    fps: f64,
+    actual_fps: f64,
+    engine_fps: f64,
     ai_latency: f64,
     rust_latency: f64,
     frame_times: Vec<f64>,
+    engine_times: Vec<f64>,
 
     // Thermal data
     current_temp: f32,
@@ -35,6 +39,9 @@ pub struct PerformanceMonitor {
     last_temp_update: Instant,
     dt_dt: f32, // degC/sec
     gpu_name_cache: String,
+    ane_load: f64,
+    gpu_load: f64,
+    backend: ExecutionProviderType,
 }
 
 #[pymethods]
@@ -54,16 +61,26 @@ impl PerformanceMonitor {
             components: Arc::new(Mutex::new(components)),
             running: Arc::new(Mutex::new(false)),
             thread_handle: None,
-            fps: 0.0,
+            actual_fps: 0.0,
+            engine_fps: 0.0,
             ai_latency: 0.0,
             rust_latency: 0.0,
             frame_times: Vec::with_capacity(60),
+            engine_times: Vec::with_capacity(60),
             current_temp: 0.0,
             prev_temp: 0.0,
             last_temp_update: Instant::now(),
             dt_dt: 0.0,
             gpu_name_cache: String::new(),
+            ane_load: 0.0,
+            gpu_load: 0.0,
+            backend: ExecutionProviderType::CPU,
         }
+    }
+
+    /// Cập nhật backend đang sử dụng
+    pub fn set_backend(&mut self, backend: ExecutionProviderType) {
+        self.backend = backend;
     }
 
     /// Bắt đầu background monitor thread
@@ -110,7 +127,41 @@ impl PerformanceMonitor {
 
         self.frame_times.push(now_sys);
         self.frame_times.retain(|&t| now_sys - t < 1.0);
-        self.fps = self.frame_times.len() as f64;
+        self.actual_fps = self.frame_times.len() as f64;
+
+        // Tính toán Engine FPS và ANE Load thực tế
+        if latency_ms > 0.1 {
+            self.engine_times.push(1000.0 / latency_ms);
+            if self.engine_times.len() > 30 {
+                self.engine_times.remove(0);
+            }
+            let sum: f64 = self.engine_times.iter().sum();
+            self.engine_fps = sum / self.engine_times.len() as f64;
+
+            // Tính toán Load thực tế dựa trên backend được chọn
+            if self.actual_fps > 0.0 {
+                let frame_window_ms = 1000.0 / self.actual_fps;
+                let load = (latency_ms / frame_window_ms * 100.0).clamp(0.0, 100.0);
+                
+                match self.backend {
+                    ExecutionProviderType::CoreML => {
+                        self.ane_load = load;
+                        self.gpu_load = 0.0;
+                    }
+                    ExecutionProviderType::WebGPU => {
+                        self.gpu_load = load;
+                        self.ane_load = 0.0;
+                    }
+                    ExecutionProviderType::CPU => {
+                        self.ane_load = 0.0;
+                        self.gpu_load = 0.0;
+                    }
+                }
+            }
+        } else {
+            self.ane_load = 0.0;
+            self.gpu_load = 0.0;
+        }
 
         // Cập nhật chỉ số nhiệt độ và tìm tên GPU
         if let Ok(comp) = self.components.lock() {
@@ -186,7 +237,10 @@ impl PerformanceMonitor {
         let sys = self.system.lock().unwrap();
 
         // Frame stats
-        stats.set_item(pyo3::intern!(py, "fps"), self.fps).unwrap();
+        stats.set_item(pyo3::intern!(py, "fps"), self.actual_fps).unwrap();
+        stats
+            .set_item(pyo3::intern!(py, "engine_fps"), self.engine_fps)
+            .unwrap();
         stats
             .set_item(pyo3::intern!(py, "ai_latency"), self.ai_latency)
             .unwrap();
@@ -238,10 +292,10 @@ impl PerformanceMonitor {
             "Generic Accelerator GPU".to_string()
         };
 
-        // Ước tính hiệu năng GPU dựa trên nhiệt độ và tải CPU (để đảm bảo luôn có số liệu hiển thị)
-        let gpu_load = (cpu_usage * 0.85).clamp(0.0, 100.0);
-        let gpu_temp = if self.current_temp > 0.0 { self.current_temp + 2.5 } else { 0.0 };
-        let gpu_power = 2.2 + (gpu_load / 100.0) * 18.0; 
+        // Sử dụng giá trị load đã tính toán trong update_frame_time thay vì fake theo CPU
+        let gpu_load = self.gpu_load.max(if self.backend == ExecutionProviderType::WebGPU { 2.0 } else { 0.0 });
+        let gpu_temp = if self.current_temp > 0.0 { self.current_temp + 1.5 } else { 0.0 };
+        let gpu_power = 0.5 + (gpu_load / 100.0) * 15.0; 
 
         gpu_info
             .set_item(pyo3::intern!(py, "available"), true)
@@ -261,6 +315,19 @@ impl PerformanceMonitor {
 
         stats
             .set_item(pyo3::intern!(py, "gpu_info"), gpu_info)
+            .unwrap();
+
+        // Thêm thông tin ANE riêng biệt (Dành cho M4 Pro)
+        let ane_info = PyDict::new(py);
+        ane_info
+            .set_item(pyo3::intern!(py, "load"), self.ane_load)
+            .unwrap();
+        ane_info
+            .set_item(pyo3::intern!(py, "status"), if self.ane_load > 1.0 { "Active" } else { "Idle" })
+            .unwrap();
+        
+        stats
+            .set_item(pyo3::intern!(py, "ane_info"), ane_info)
             .unwrap();
 
         stats.into()
