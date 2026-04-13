@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::yolo::{YoloDetection, ModelConfig, YoloTask, ExecutionProviderType};
+use crate::image_proc::draw_rect_native;
 
 #[pyclass]
 pub struct YoloV26Detector {
@@ -38,6 +39,10 @@ pub struct YoloV26Detector {
     pub last_inference_ms: f64,
     #[pyo3(get)]
     pub last_nms_ms: f64, // decode time
+    // Buffer tái sử dụng để tránh cấp phát bộ nhớ liên tục
+    input_tensor_buffer: Array4<f32>,
+    #[pyo3(get)]
+    pub ep: ExecutionProviderType,
 }
 
 struct YoloResultsV26 {
@@ -93,6 +98,7 @@ impl YoloV26Detector {
             ExecutionProviderType::CoreML => {
                 session_builder.with_execution_providers([CoreML::default()
                     .with_subgraphs(true)
+                    .with_low_precision_accumulation_on_gpu(true)
                     .with_compute_units(ort::ep::coreml::ComputeUnits::All)
                     .build()])
             }
@@ -112,6 +118,8 @@ impl YoloV26Detector {
 
         let session = session_builder
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Lỗi cấu hình bộ thực thi: {}", e)))?
+            .with_intra_threads(1)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
             .commit_from_file(model_path)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Lỗi tải model: {}", e)))?;
 
@@ -135,6 +143,8 @@ impl YoloV26Detector {
             last_preprocess_ms: 0.0,
             last_inference_ms: 0.0,
             last_nms_ms: 0.0,
+            input_tensor_buffer: Array4::zeros((1, 3, config.input_size.1, config.input_size.0)),
+            ep,
         })
     }
 
@@ -150,8 +160,8 @@ impl YoloV26Detector {
         py: Python<'py>,
         numpy_array: &Bound<'py, PyAny>,
     ) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>, Py<PyAny>, Py<PyAny>)> {
-        let (width, height, input_array) = self.prepare_input(numpy_array)?;
-        let results = self.run_inference_internal(py, input_array, (width, height))?;
+        let (width, height) = self.prepare_input(numpy_array)?;
+        let results = self.run_inference_internal(py, (width, height))?;
 
         let class_ids = Int32Array::from(results.detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
         let confidences = Float32Array::from(results.detections.iter().map(|d| d.confidence).collect::<Vec<_>>());
@@ -221,9 +231,115 @@ impl YoloV26Detector {
         Ok((arr_cap, sch_cap, p_arr, p_sch))
     }
 
+    /// Nhận diện YOLOv26 và vẽ native trực tiếp lên buffer (Vòng lặp đóng)
+    fn detect_and_draw<'py>(
+        &mut self,
+        py: Python<'py>,
+        numpy_array: &Bound<'py, PyAny>,
+    ) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>, Py<PyAny>, Py<PyAny>)> {
+        // 1. Chạy AI Pipeline
+        let (detections, proto_flat, width, height) = self.run_detection_pipeline(py, numpy_array)?;
+
+        // 2. Lấy con trỏ bộ nhớ của ảnh để vẽ Native
+        let data_ptr = numpy_array
+            .getattr("ctypes")?
+            .getattr("data")?
+            .extract::<usize>()?;
+        
+        // Tạo mutable slice từ con trỏ (BGR/RGB)
+        let data = unsafe { std::slice::from_raw_parts_mut(data_ptr as *mut u8, width * height * 3) };
+
+        // 3. Vẽ Native Bounding Box
+        let colors: [[u8; 3]; 6] = [
+            [0, 255, 0],   // Green
+            [0, 255, 255], // Yellow
+            [255, 255, 0], // Cyan
+            [255, 0, 0],   // Red
+            [255, 0, 255], // Magenta
+            [0, 165, 255], // Orange
+        ];
+
+        for det in &detections {
+            let color = colors[det.class_id as usize % colors.len()];
+            draw_rect_native(
+                data, 
+                width, 
+                height, 
+                det.x, 
+                det.y, 
+                det.x + det.width, 
+                det.y + det.height, 
+                color, 
+                2
+            );
+        }
+
+        // 4. Đóng gói kết quả Arrow (Giống detect_to_arrow)
+        let class_ids = Int32Array::from(detections.iter().map(|d: &YoloDetection| d.class_id).collect::<Vec<i32>>());
+        let confidences = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.confidence).collect::<Vec<f32>>());
+        let boxes_x = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.x).collect::<Vec<f32>>());
+        let boxes_y = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.y).collect::<Vec<f32>>());
+        let boxes_w = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.width).collect::<Vec<f32>>());
+        let boxes_h = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.height).collect::<Vec<f32>>());
+
+        let mut fields = vec![
+            Field::new("class_id", DataType::Int32, false),
+            Field::new("confidence", DataType::Float32, false),
+            Field::new("x", DataType::Float32, false),
+            Field::new("y", DataType::Float32, false),
+            Field::new("w", DataType::Float32, false),
+            Field::new("h", DataType::Float32, false),
+        ];
+        let mut arrays: Vec<Arc<dyn Array>> = vec![
+            Arc::new(class_ids), Arc::new(confidences),
+            Arc::new(boxes_x), Arc::new(boxes_y),
+            Arc::new(boxes_w), Arc::new(boxes_h),
+        ];
+
+        if self.num_keypoints > 0 {
+            fields.push(Field::new("keypoints", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true));
+            let mut kp_builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
+            for det in &detections {
+                for (x, y, conf) in &det.keypoints {
+                    kp_builder.values().append_value(*x);
+                    kp_builder.values().append_value(*y);
+                    kp_builder.values().append_value(*conf);
+                }
+                kp_builder.append(true);
+            }
+            arrays.push(Arc::new(kp_builder.finish()));
+        }
+
+        if self.num_mask_coeffs > 0 {
+            fields.push(Field::new("mask_coeffs", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true));
+            let mut mc_builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
+            for det in &detections {
+                for c in &det.mask_coeffs { mc_builder.values().append_value(*c); }
+                mc_builder.append(true);
+            }
+            arrays.push(Arc::new(mc_builder.finish()));
+        }
+
+        let struct_array = StructArray::try_new(Fields::from(fields), arrays, None)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e)))?;
+
+        let (arr_cap, sch_cap) = crate::ffi::export_to_python(py, struct_array.to_data())?;
+        
+        let (p_arr, p_sch) = if let Some(p) = proto_flat {
+            let data_vec: Vec<f32> = p.into_raw_vec_and_offset().0;
+            let proto_array = Float32Array::from(data_vec);
+            let (pa, ps) = crate::ffi::export_to_python(py, proto_array.to_data())?;
+            (pa.into_any().unbind(), ps.into_any().unbind())
+        } else {
+            (py.None(), py.None())
+        };
+
+        Ok((arr_cap, sch_cap, p_arr, p_sch))
+    }
+
     fn detect_from_numpy(&mut self, py: Python, numpy_array: &Bound<PyAny>) -> PyResult<Py<PyList>> {
-        let (width, height, input_array) = self.prepare_input(numpy_array)?;
-        let results = self.run_inference_internal(py, input_array, (width, height))?;
+        let (width, height) = self.prepare_input(numpy_array)?;
+        let results = self.run_inference_internal(py, (width, height))?;
         let py_list = PyList::empty(py);
         for det in results.detections { py_list.append(Py::new(py, det)?)?; }
         Ok(py_list.into())
@@ -231,32 +347,58 @@ impl YoloV26Detector {
 }
 
 impl YoloV26Detector {
-    fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize, Array4<f32>)> {
+    #[inline]
+    fn run_detection_pipeline<'py>(&mut self, py: Python<'py>, numpy_array: &Bound<'py, PyAny>) -> PyResult<(Vec<YoloDetection>, Option<ndarray::ArrayD<f32>>, usize, usize)> {
+        let (width, height) = self.prepare_input(numpy_array)?;
+        let results = self.run_inference_internal(py, (width, height))?;
+        Ok((results.detections, results.proto, width, height))
+    }
+
+    fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize)> {
         let shape: (usize, usize, usize) = numpy_array.getattr("shape")?.extract()?;
         let (height, width, _) = shape;
         let data_ptr = numpy_array.getattr("ctypes")?.getattr("data")?.extract::<usize>()?;
         let raw_data = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) };
         let t_pre = Instant::now();
-        let input_array = crate::image_proc::preprocess_image_kornia(raw_data, width, height, self.input_width, self.input_height)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+        
+        crate::image_proc::preprocess_image_kornia(
+            raw_data, 
+            width, 
+            height, 
+            self.input_width, 
+            self.input_height, 
+            &mut self.input_tensor_buffer,
+            true
+        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+        
         self.last_preprocess_ms = t_pre.elapsed().as_secs_f64() * 1000.0;
-        Ok((width, height, input_array))
+        Ok((width, height))
     }
 
     fn run_inference_internal(
         &mut self,
         py: Python,
-        input_array: Array4<f32>,
         orig_dim: (usize, usize),
     ) -> PyResult<YoloResultsV26> {
         let conf_threshold = self.conf_threshold;
         let scale_x = orig_dim.0 as f32 / self.input_width as f32;
         let scale_y = orig_dim.1 as f32 / self.input_height as f32;
 
-        let input_tensor = Value::from_array(input_array).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        let input_tensor = Value::from_array(self.input_tensor_buffer.clone()).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         let t_infer = Instant::now();
         let outputs = py.detach(|| self.session.run(ort::inputs![input_tensor])).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         self.last_inference_ms = t_infer.elapsed().as_secs_f64() * 1000.0;
+
+        // Logging hiệu suất cực kỳ chi tiết cho M4 Pro (YOLOv26)
+        if self.last_inference_ms > 0.1 {
+            info!(
+                "🎯 Perf Metrics [v26]: Pre={:.2}ms, Infer={:.2}ms, Total={:.2}ms | FPS: {:.1}",
+                self.last_preprocess_ms,
+                self.last_inference_ms,
+                self.last_preprocess_ms + self.last_inference_ms,
+                1000.0 / (self.last_preprocess_ms + self.last_inference_ms).max(0.1)
+            );
+        }
 
         let t_decode = Instant::now();
         let mut detections = Vec::with_capacity(32);

@@ -9,7 +9,7 @@
 use arrow::array::{Array, Float32Array, Int32Array, StructArray};
 use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
-use ndarray::Array4;
+use ndarray::{Array4, Axis, s};
 use ort::ep::{CoreML, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::yolo::{YoloDetection, ModelConfig, YoloTask, ExecutionProviderType};
+use crate::image_proc::draw_rect_native;
 
 #[pyclass]
 pub struct YoloV8Detector {
@@ -39,6 +40,10 @@ pub struct YoloV8Detector {
     pub last_inference_ms: f64,
     #[pyo3(get)]
     pub last_nms_ms: f64,
+    // Buffer tái sử dụng để tránh cấp phát bộ nhớ liên tục (640*640*3*4 bytes)
+    input_tensor_buffer: Array4<f32>,
+    #[pyo3(get)]
+    pub ep: ExecutionProviderType,
 }
 
 #[pymethods]
@@ -94,6 +99,7 @@ impl YoloV8Detector {
             ExecutionProviderType::CoreML => {
                 session_builder.with_execution_providers([CoreML::default()
                     .with_subgraphs(true)
+                    .with_low_precision_accumulation_on_gpu(true)
                     .with_compute_units(ort::ep::coreml::ComputeUnits::All)
                     .build()])
             }
@@ -111,6 +117,7 @@ impl YoloV8Detector {
             }
         };
         
+        // Cấu hình Session tối ưu cho Apple Silicon
         let session = session_builder
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -118,6 +125,8 @@ impl YoloV8Detector {
                     e
                 ))
             })?
+            .with_intra_threads(1) // M4 Pro có nhân hiệu năng cao, giảm tranh chấp thread
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
             .commit_from_file(model_path)
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -147,6 +156,8 @@ impl YoloV8Detector {
             last_preprocess_ms: 0.0,
             last_inference_ms: 0.0,
             last_nms_ms: 0.0,
+            input_tensor_buffer: Array4::zeros((1, 3, config.input_size.1, config.input_size.0)),
+            ep,
         })
     }
 
@@ -218,6 +229,93 @@ impl YoloV8Detector {
             let proto_array = Float32Array::from(proto);
             let proto_data = proto_array.to_data();
             let (pa, ps) = crate::ffi::export_to_python(py, proto_data)?;
+            (pa.into_any().unbind(), ps.into_any().unbind())
+        } else {
+            (py.None(), py.None())
+        };
+
+        Ok((arr_cap, sch_cap, proto_arr, proto_sch))
+    }
+
+    /// Nhận diện AI và vẽ trực tiếp Bounding Box lên ảnh (Vẽ Native trong Rust)
+    /// Trả về kết quả Arrow như cũ để không làm gãy logic Python
+    fn detect_and_draw<'py>(
+        &mut self,
+        py: Python<'py>,
+        numpy_array: &Bound<'py, PyAny>,
+    ) -> PyResult<(
+        Bound<'py, PyCapsule>,
+        Bound<'py, PyCapsule>,
+        Py<PyAny>,
+        Py<PyAny>,
+    )> {
+        // 1. Chạy AI Pipeline
+        let (detections, proto_flat, width, height) = self.run_detection_pipeline(py, numpy_array)?;
+
+        // 2. Lấy con trỏ bộ nhớ của ảnh để vẽ Native
+        let data_ptr = numpy_array
+            .getattr("ctypes")?
+            .getattr("data")?
+            .extract::<usize>()?;
+        
+        // Tạo mutable slice từ con trỏ (BGR/RGB)
+        let data = unsafe { std::slice::from_raw_parts_mut(data_ptr as *mut u8, width * height * 3) };
+
+        // 3. Vẽ Native Bounding Box
+        let colors: [[u8; 3]; 6] = [
+            [0, 255, 0],   // Green
+            [0, 255, 255], // Yellow
+            [255, 255, 0], // Cyan
+            [255, 0, 0],   // Red
+            [255, 0, 255], // Magenta
+            [0, 165, 255], // Orange
+        ];
+
+        for det in &detections {
+            let color = colors[det.class_id as usize % colors.len()];
+            draw_rect_native(
+                data, 
+                width, 
+                height, 
+                det.x, 
+                det.y, 
+                det.x + det.width, 
+                det.y + det.height, 
+                color, 
+                2
+            );
+        }
+
+        // 4. Đóng gói kết quả Arrow (Giống detect_to_arrow)
+        let class_ids = Int32Array::from(detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
+        let confidences = Float32Array::from(detections.iter().map(|d| d.confidence).collect::<Vec<_>>());
+        let boxes_x = Float32Array::from(detections.iter().map(|d| d.x).collect::<Vec<_>>());
+        let boxes_y = Float32Array::from(detections.iter().map(|d| d.y).collect::<Vec<_>>());
+        let boxes_w = Float32Array::from(detections.iter().map(|d| d.width).collect::<Vec<_>>());
+        let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
+
+        let mut fields = Self::build_default_arrow_fields();
+        let mut arrays = Self::build_default_arrow_arrays(class_ids, confidences, boxes_x, boxes_y, boxes_w, boxes_h);
+
+        if self.num_keypoints > 0 {
+            fields.push(Field::new("keypoints", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true));
+            arrays.push(Self::build_list_array(&detections, |det| {
+                det.keypoints.iter().flat_map(|&(x, y, conf)| [x, y, conf]).collect::<Vec<_>>().leak()
+            }));
+        }
+
+        if self.num_mask_coeffs > 0 {
+            fields.push(Field::new("mask_coeffs", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true));
+            arrays.push(Self::build_list_array(&detections, |det| &det.mask_coeffs));
+        }
+
+        let struct_array = StructArray::try_new(Fields::from(fields), arrays, None)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e)))?;
+
+        let (arr_cap, sch_cap) = crate::ffi::export_to_python(py, struct_array.to_data())?;
+        let (proto_arr, proto_sch) = if let Some(proto) = proto_flat {
+            let proto_array = Float32Array::from(proto);
+            let (pa, ps) = crate::ffi::export_to_python(py, proto_array.to_data())?;
             (pa.into_any().unbind(), ps.into_any().unbind())
         } else {
             (py.None(), py.None())
@@ -312,13 +410,13 @@ impl YoloV8Detector {
 
     #[inline]
     fn run_detection_pipeline<'py>(&mut self, py: Python<'py>, numpy_array: &Bound<'py, PyAny>) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>, usize, usize)> {
-        let (width, height, input_array) = self.prepare_input(numpy_array)?;
-        let (detections, proto_flat) = self.run_inference_internal(py, input_array, (width, height))?;
+        let (width, height) = self.prepare_input(numpy_array)?;
+        let (detections, proto_flat) = self.run_inference_internal(py, (width, height))?;
         Ok((detections, proto_flat, width, height))
     }
 
     #[inline]
-    fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize, Array4<f32>)> {
+    fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize)> {
         let shape_obj = numpy_array.getattr("shape")?;
         let shape: (usize, usize, usize) = shape_obj.extract()?;
         let (height, width, _channels) = shape;
@@ -332,12 +430,15 @@ impl YoloV8Detector {
             unsafe { std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) };
 
         let t_pre = Instant::now();
-        let input_array = crate::image_proc::preprocess_image_kornia(
+        // Zero-allocation: Pre-allocated buffer reuse
+        crate::image_proc::preprocess_image_kornia(
             raw_data,
             width,
             height,
             self.input_width,
             self.input_height,
+            &mut self.input_tensor_buffer,
+            true, // is_bgr
         )
         .map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -347,13 +448,12 @@ impl YoloV8Detector {
         })?;
         self.last_preprocess_ms = t_pre.elapsed().as_secs_f64() * 1000.0;
 
-        Ok((width, height, input_array))
+        Ok((width, height))
     }
 
     fn run_inference_internal(
         &mut self,
         py: Python,
-        input_array: Array4<f32>,
         orig_dim: (usize, usize),
     ) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>)> {
         let is_cls = self.is_cls_model;
@@ -366,7 +466,8 @@ impl YoloV8Detector {
         let input_width_f = self.input_width as f32;
         let input_height_f = self.input_height as f32;
 
-        let input_tensor = Value::from_array(input_array).map_err(|e| {
+        // Create tensor from pre-allocated buffer (Cloned for ORT ownership)
+        let input_tensor = Value::from_array(self.input_tensor_buffer.clone()).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Failed to create input tensor: {}",
                 e
@@ -383,6 +484,17 @@ impl YoloV8Detector {
                 ))
             })?;
         self.last_inference_ms = t_infer.elapsed().as_secs_f64() * 1000.0;
+
+        // Logging hiệu suất cực kỳ chi tiết cho M4 Pro
+        if self.last_inference_ms > 0.1 {
+            info!(
+                "🚀 Perf Metrics [v8]: Pre={:.2}ms, Infer={:.2}ms, Total={:.2}ms | FPS: {:.1}",
+                self.last_preprocess_ms,
+                self.last_inference_ms,
+                self.last_preprocess_ms + self.last_inference_ms,
+                1000.0 / (self.last_preprocess_ms + self.last_inference_ms).max(0.1)
+            );
+        }
 
         let out_value = &outputs["output0"];
         let out_extract = out_value.try_extract_tensor::<f32>().map_err(|e| {
@@ -419,14 +531,23 @@ impl YoloV8Detector {
         let scale_y = orig_dim.1 as f32 / input_height_f;
 
         let t_nms = Instant::now();
-        let mut all_boxes = Vec::with_capacity(128);
 
+        // Tối ưu layout: (1, 84, 8400) -> (84, 8400) -> (8400, 84)
+        let out_data_2d = out_data.index_axis(Axis(0), 0).reversed_axes();
+        let out_data_2d = out_data_2d.into_dimensionality::<ndarray::Ix2>().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Dimensionality error: {}", e))
+        })?;
+
+        let mut all_boxes: Vec<_> = Vec::with_capacity(128);
         for i in 0..num_anchors {
+            let row = out_data_2d.row(i);
+            let scores = row.slice(s![4..4 + num_classes]);
+
+            // Vectorized confidence extraction (Fast Path)
             let mut max_conf = 0.0f32;
             let mut max_class = 0_usize;
-
-            for c in 0..num_classes {
-                let conf = out_data[[0, 4 + c, i]];
+            
+            for (c, &conf) in scores.iter().enumerate() {
                 if conf > max_conf {
                     max_conf = conf;
                     max_class = c;
@@ -437,14 +558,14 @@ impl YoloV8Detector {
                 continue;
             }
 
-            let cx = out_data[[0, 0, i]];
-            let cy = out_data[[0, 1, i]];
-            let w = out_data[[0, 2, i]];
-            let h = out_data[[0, 3, i]];
+            let cx = row[0];
+            let cy = row[1];
+            let w = row[2];
+            let h = row[3];
 
             let mut keypoints = Vec::with_capacity(num_keypoints);
             let (final_x, final_y, final_w, final_h): (f32, f32, f32, f32) = if is_obb {
-                let angle = out_data[[0, 4 + num_classes, i]];
+                let angle = row[4 + num_classes];
                 let cos_a = angle.cos();
                 let sin_a = angle.sin();
                 let dx = w / 2.0 * cos_a;
@@ -456,7 +577,7 @@ impl YoloV8Detector {
                     (cx - dx - ex, cy - dy - ey),
                     (cx + dx - ex, cy + dy - ey),
                     (cx + dx + ex, cy + dy + ey),
-                    (cx - dx + ex, cy + dy + ey),
+                    (cx - dx + ex, cy - dy + ey),
                 ];
 
                 for pt in &pts {
@@ -481,9 +602,9 @@ impl YoloV8Detector {
             if num_keypoints > 0 {
                 let base_offset = 4 + num_classes;
                 for kp_idx in 0..num_keypoints {
-                    let kx = out_data[[0, base_offset + kp_idx * 3, i]] * scale_x;
-                    let ky = out_data[[0, base_offset + kp_idx * 3 + 1, i]] * scale_y;
-                    let kconf = out_data[[0, base_offset + kp_idx * 3 + 2, i]];
+                    let kx = row[base_offset + kp_idx * 3] * scale_x;
+                    let ky = row[base_offset + kp_idx * 3 + 1] * scale_y;
+                    let kconf = row[base_offset + kp_idx * 3 + 2];
                     keypoints.push((kx, ky, kconf));
                 }
             }
@@ -492,7 +613,7 @@ impl YoloV8Detector {
             if num_mask_coeffs > 0 {
                 let mc_base = 4 + num_classes;
                 for m in 0..num_mask_coeffs {
-                    mask_coeffs.push(out_data[[0, mc_base + m, i]]);
+                    mask_coeffs.push(row[mc_base + m]);
                 }
             }
 
