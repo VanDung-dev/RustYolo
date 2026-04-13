@@ -42,14 +42,15 @@ def export_yolo_by_name():
         model = YOLO(model_pt)
         logger.info(f"Load model {model_pt} thành công")
         
-        # Export sang ONNX với cấu hình tối ưu cho Rust
-        logger.info("\nĐang export ONNX...")
+        # Export sang ONNX với cấu hình tối ưu cho Rust (FP32 ổn định hơn cho CoreML trên M4 Pro)
+        logger.info("\nĐang export ONNX (FP32 Mode)...")
         exported_path = model.export(
             format="onnx",
-            opset=12,         # Opset 12 thường ổn định hơn cho nhiều runtime
+            opset=12,         # Opset 12 ổn định cho CoreML
             simplify=False,
             dynamic=False,
             imgsz=640,
+            half=False,       # Dùng FP32 để đạt độ ổn định và FPS cao nhất
             nms=False,
             agnostic_nms=False,
             optimize=True,
