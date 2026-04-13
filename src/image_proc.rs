@@ -19,14 +19,15 @@ pub fn preprocess_image_kornia(
     orig_height: usize,
     target_width: usize,
     target_height: usize,
-) -> Result<Array4<f32>, String> {
+    input_array: &mut Array4<f32>, // Nhận buffer đã cấp phát sẵn
+    is_bgr: bool,
+) -> Result<(), String> {
     // Bước 1: Tạo đối tượng Image Kornia từ buffer raw không copy dữ liệu
     let image_size = ImageSize {
         width: orig_width,
         height: orig_height,
     };
 
-    // Sử dụng from_size_slice thay vì from_slice để bỏ qua kiểm tra độ dài
     let image = Image::<u8, 3, CpuAllocator>::from_size_slice(image_size, raw_data, CpuAllocator)
         .map_err(|e| format!("Lỗi tạo ảnh Kornia: {:?}", e))?;
 
@@ -36,36 +37,106 @@ pub fn preprocess_image_kornia(
         height: target_height,
     };
 
-    // Tạo buffer output trước để tránh allocation trong lúc resize
     let mut resized_image = Image::<u8, 3, CpuAllocator>::from_size_val(new_size, 0, CpuAllocator)
         .map_err(|e| format!("Lỗi tạo ảnh output resize: {:?}", e))?;
 
     resize_fast_rgb(&image, &mut resized_image, InterpolationMode::Bilinear)
         .map_err(|e| format!("Lỗi resize ảnh Kornia: {:?}", e))?;
 
-    // Bước 3: Chuẩn hóa và chuyển đổi định dạng tensor
-    // YOLOv8 yêu cầu định dạng NCHW: (1, 3, height, width)
-    // Ảnh Kornia đang ở định dạng HWC giá trị [0, 255]
-    // Cần chuyển đổi sang CHW và chuẩn hóa về khoảng [0, 1]
-
-    // Lấy view trực tiếp buffer không sao chép
+    // Bước 3: Chuẩn hóa và chuyển đổi định dạng tensor NCHW
     let resized_data = resized_image.as_slice();
-
-    // Tạo array view 3 chiều dữ liệu HWC
     let hwc_array = ndarray::ArrayView3::from_shape((target_height, target_width, 3), resized_data)
         .map_err(|e| format!("Lỗi tạo ndarray view: {:?}", e))?;
 
-    // Transpose và chuẩn hóa trong 1 bước sử dụng SIMD vectorization
-    // Nhanh hơn rất nhiều so với vòng lặp tay
-    let mut input_array = Array4::<f32>::zeros((1, 3, target_height, target_width));
+    // Kết hợp hoán đổi kênh (BGR->RGB nếu cần) và chuẩn hóa trong 1 lượt duy nhất
+    // Sử dụng Zip::for_each (Sequential) với buffer được tái sử dụng
+    if is_bgr {
+        // Red = index 2 trong BGR
+        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 0, .., ..]))
+            .and(hwc_array.slice(ndarray::s![.., .., 2]))
+            .for_each(|out, &inn| *out = inn as f32 / 255.0);
+        // Green = index 1
+        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 1, .., ..]))
+            .and(hwc_array.slice(ndarray::s![.., .., 1]))
+            .for_each(|out, &inn| *out = inn as f32 / 255.0);
+        // Blue = index 0
+        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 2, .., ..]))
+            .and(hwc_array.slice(ndarray::s![.., .., 0]))
+            .for_each(|out, &inn| *out = inn as f32 / 255.0);
+    } else {
+        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 0, .., ..]))
+            .and(hwc_array.slice(ndarray::s![.., .., 0]))
+            .for_each(|out, &inn| *out = inn as f32 / 255.0);
+        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 1, .., ..]))
+            .and(hwc_array.slice(ndarray::s![.., .., 1]))
+            .for_each(|out, &inn| *out = inn as f32 / 255.0);
+        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 2, .., ..]))
+            .and(hwc_array.slice(ndarray::s![.., .., 2]))
+            .for_each(|out, &inn| *out = inn as f32 / 255.0);
+    }
 
-    // Chuyển đổi trục HWC -> CHW không copy dữ liệu
-    let chw_array = hwc_array.permuted_axes([2, 0, 1]);
+    Ok(())
+}
 
-    // Gán giá trị và chuẩn hóa đồng thời vectorized
-    input_array
-        .slice_mut(ndarray::s![0, .., .., ..])
-        .assign(&chw_array.mapv(|x| x as f32 / 255.0));
+/// Vẽ hình chữ nhật trực tiếp lên buffer ảnh (BGR/RGB)
+/// Tối ưu hóa cực độ: Pixel-level manipulation không tốn overhead thư viện
+pub fn draw_rect_native(
+    data: &mut [u8],
+    width: usize,
+    height: usize,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    color: [u8; 3],
+    thickness: i32,
+) {
+    let x1 = (x1.round() as i32).max(0).min(width as i32 - 1);
+    let y1 = (y1.round() as i32).max(0).min(height as i32 - 1);
+    let x2 = (x2.round() as i32).max(0).min(width as i32 - 1);
+    let y2 = (y2.round() as i32).max(0).min(height as i32 - 1);
 
-    Ok(input_array)
+    for t in 0..thickness {
+        // Vẽ cạnh ngang (Trái -> Phải)
+        for x in (x1 - t).max(0)..(x2 + t).min(width as i32) {
+            for dy in &[-t, t] {
+                let y = (y1 + dy).max(0).min(height as i32 - 1);
+                let idx = (y as usize * width + x as usize) * 3;
+                if idx + 2 < data.len() {
+                    data[idx] = color[0];
+                    data[idx + 1] = color[1];
+                    data[idx + 2] = color[2];
+                }
+                
+                let y = (y2 + dy).max(0).min(height as i32 - 1);
+                let idx = (y as usize * width + x as usize) * 3;
+                if idx + 2 < data.len() {
+                    data[idx] = color[0];
+                    data[idx + 1] = color[1];
+                    data[idx + 2] = color[2];
+                }
+            }
+        }
+        
+        // Vẽ cạnh dọc (Trên -> Dưới)
+        for y in (y1 - t).max(0)..(y2 + t).min(height as i32) {
+            for dx in &[-t, t] {
+                let x = (x1 + dx).max(0).min(width as i32 - 1);
+                let idx = (y as usize * width + x as usize) * 3;
+                if idx + 2 < data.len() {
+                    data[idx] = color[0];
+                    data[idx + 1] = color[1];
+                    data[idx + 2] = color[2];
+                }
+                
+                let x = (x2 + dx).max(0).min(width as i32 - 1);
+                let idx = (y as usize * width + x as usize) * 3;
+                if idx + 2 < data.len() {
+                    data[idx] = color[0];
+                    data[idx + 1] = color[1];
+                    data[idx + 2] = color[2];
+                }
+            }
+        }
+    }
 }
