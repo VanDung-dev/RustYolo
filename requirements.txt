@@ -6,5 +6,10 @@ pyarrow>=18.0.0
 # DEVELOPMENT / EXPORT DEPENDENCIES
 ultralytics>=8.0.0
 onnx>=1.21.0
-onnxsim>=0.6.2
-maturin>=1.11.5
+onnxsim>=0.6.0
+maturin>=1.11.0
+
+# PERFORMANCE DEPENDENCIES
+matplotlib>=3.10.0
+seaborn>=0.13.0
+pandas>=3.0.0
