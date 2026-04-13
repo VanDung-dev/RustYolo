@@ -1,0 +1,42 @@
+
+🚀 BẮT ĐẦU BENCHMARK YOLOv8 TRÊN APPLE SILICON (ENGINE: COREML)
+Log sẽ được lưu tự động tại: output/log_coreml.txt
+============================================================
+
+[MODEL]: yolov8n.onnx
+Command simulation: python main.py --model yolov8n.onnx --ep coreml
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 12.84ms | Estimated FPS = 77.9
+------------------------------
+
+[MODEL]: yolov8s.onnx
+Command simulation: python main.py --model yolov8s.onnx --ep coreml
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 19.77ms | Estimated FPS = 50.6
+------------------------------
+
+[MODEL]: yolov8m.onnx
+Command simulation: python main.py --model yolov8m.onnx --ep coreml
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 27.40ms | Estimated FPS = 36.5
+------------------------------
+
+[MODEL]: yolov8l.onnx
+Command simulation: python main.py --model yolov8l.onnx --ep coreml
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 36.51ms | Estimated FPS = 27.4
+------------------------------
+
+[MODEL]: yolov8x.onnx
+Command simulation: python main.py --model yolov8x.onnx --ep coreml
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 46.40ms | Estimated FPS = 21.6
+------------------------------
+
+============================================================
+🏁 Benchmark CoreML kết thúc. Log đã được lưu tại output/log_coreml.txt

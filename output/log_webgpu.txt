@@ -1,0 +1,42 @@
+
+🌐 BẮT ĐẦU BENCHMARK YOLOv8 TRÊN GPU ĐA NỀN TẢNG (ENGINE: WEBGPU)
+Log sẽ được lưu tự động tại: output/log_webgpu.txt
+============================================================
+
+[MODEL]: yolov8n.onnx
+Command simulation: python main.py --model yolov8n.onnx --ep webgpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 12.81ms | Estimated FPS = 78.1
+------------------------------
+
+[MODEL]: yolov8s.onnx
+Command simulation: python main.py --model yolov8s.onnx --ep webgpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 23.34ms | Estimated FPS = 42.8
+------------------------------
+
+[MODEL]: yolov8m.onnx
+Command simulation: python main.py --model yolov8m.onnx --ep webgpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 49.14ms | Estimated FPS = 20.3
+------------------------------
+
+[MODEL]: yolov8l.onnx
+Command simulation: python main.py --model yolov8l.onnx --ep webgpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 87.19ms | Estimated FPS = 11.5
+------------------------------
+
+[MODEL]: yolov8x.onnx
+Command simulation: python main.py --model yolov8x.onnx --ep webgpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất...
+✅ Hoàn thành: Average Latency = 131.23ms | Estimated FPS = 7.6
+------------------------------
+
+============================================================
+🏁 Benchmark WebGPU kết thúc. Log đã được lưu tại output/log_webgpu.txt

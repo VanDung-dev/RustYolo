@@ -1,0 +1,42 @@
+
+💻 BẮT ĐẦU BENCHMARK YOLOv8 TRÊN CPU FALLBACK (ENGINE: CPU)
+Log sẽ được lưu tự động tại: output/log_cpu.txt
+============================================================
+
+[MODEL]: yolov8n.onnx
+Command simulation: python main.py --model yolov8n.onnx --ep cpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất (CPU)...
+✅ Hoàn thành: Average Latency = 33.37ms | Estimated FPS = 30.0
+------------------------------
+
+[MODEL]: yolov8s.onnx
+Command simulation: python main.py --model yolov8s.onnx --ep cpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất (CPU)...
+✅ Hoàn thành: Average Latency = 68.60ms | Estimated FPS = 14.6
+------------------------------
+
+[MODEL]: yolov8m.onnx
+Command simulation: python main.py --model yolov8m.onnx --ep cpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất (CPU)...
+✅ Hoàn thành: Average Latency = 139.51ms | Estimated FPS = 7.2
+------------------------------
+
+[MODEL]: yolov8l.onnx
+Command simulation: python main.py --model yolov8l.onnx --ep cpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất (CPU)...
+✅ Hoàn thành: Average Latency = 263.21ms | Estimated FPS = 3.8
+------------------------------
+
+[MODEL]: yolov8x.onnx
+Command simulation: python main.py --model yolov8x.onnx --ep cpu
+Đang khởi động phần cứng (Warmup)...
+Đang đo lường hiệu suất (CPU)...
+✅ Hoàn thành: Average Latency = 364.36ms | Estimated FPS = 2.7
+------------------------------
+
+============================================================
+🏁 Benchmark CPU kết thúc. Log đã được lưu tại output/log_cpu.txt
