@@ -87,15 +87,21 @@ def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
             temp = stats.get("cpu_temp", 0.0)
             dt_dt = stats.get("dt_dt", 0.0)
             
-            # Chiến lược điều tiết nhiệt (Adaptive Scheduling)
+            # Chiến lược điều tiết nhiệt thực tế cho Apple Silicon
+            # Chỉ can thiệp khi nhiệt độ thực sự cao (> 85°C)
             thermal_delay = 0
-            if temp > 82.0 or dt_dt > 0.4:
-                thermal_delay = 0.01  # 10ms delay to cool down
-            if temp > 88.0:
-                thermal_delay = 0.03  # 30ms delay
+            if temp > 85.0:
+                thermal_delay = 0.005  # 5ms delay để hạ nhiệt nhẹ
+            if temp > 92.0:
+                thermal_delay = 0.02   # 20ms delay khi rất nóng
             
             if thermal_delay > 0:
+                if not getattr(ai_worker_thread, "_throttling", False):
+                    logger.warning(f"⚠️ Thermal Control: {temp:.1f}°C. Đang điều tiết nhẹ để duy trì ổn định...")
+                    ai_worker_thread._throttling = True
                 time.sleep(thermal_delay)
+            else:
+                ai_worker_thread._throttling = False
 
             # 2. Lấy ảnh mới nhất ra xử lý
             frame = frame_queue.get(timeout=0.1)
@@ -173,6 +179,7 @@ def run_camera_detection(
 
     # Tạo performance monitor và chạy background thread
     monitor = PerformanceMonitor()
+    monitor.set_backend(detector.ep)
     monitor.start_background_monitor()
 
     # Khởi động luồng AI Inference
@@ -193,10 +200,11 @@ def run_camera_detection(
             if not ret or frame is None:
                 continue
 
-            # Xử lý resize frame nếu cần
+            # Bỏ qua resize nếu frame đã khớp độ phân giải mục tiêu
             h, w = frame.shape[:2]
             if h != CAMERA_HEIGHT or w != CAMERA_WIDTH:
-                frame = cv2.resize(frame, (CAMERA_WIDTH, CAMERA_HEIGHT))
+                # Dùng INTER_LINEAR cho tốc độ cao nhất
+                frame = cv2.resize(frame, (CAMERA_WIDTH, CAMERA_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
             # Gắn frame vào hàng đợi cho AI
             if frame_queue.empty():
@@ -213,22 +221,23 @@ def run_camera_detection(
             # Vẽ bounding boxes cực nhanh
             annotated_frame = detector.annotate_frame(frame, current_results)
 
-            # Gửi buffer frame sang Rust xử lý zero-copy
-            frame_ptr = frame.__array_interface__['data'][0]
-            frame_len = frame.size
-            monitor.process_frame(frame_ptr, frame_len)
+            # ĐÃ GỠ BỎ: monitor.process_frame - Quá trình này quét pixel bằng Python gây tốn CPU vô ích
 
-            # Lấy stats cached và hiển thị panel
+            # 3. Lấy stats cached và hiển thị panel (Tối ưu: Chỉ vẽ lại 10 lần/giây)
             stats = monitor.get_stats()
             stats.update(stats_extra)
             
-            # Đảm bảo chiều cao Stats Panel luôn khớp tuyệt đối với Frame Camera
-            frame_h, frame_w = annotated_frame.shape[:2]
-            stats_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, frame_h)
+            curr_time = time.perf_counter()
+            if not hasattr(run_camera_detection, "_last_stats_time"):
+                run_camera_detection._last_stats_time = 0
+                run_camera_detection._cached_panel = None
+
+            if curr_time - run_camera_detection._last_stats_time > 0.1: # 10 FPS UI Update
+                run_camera_detection._cached_panel = create_stats_panel(stats, STATS_PANEL_WIDTH, CAMERA_HEIGHT)
+                run_camera_detection._last_stats_time = curr_time
             
-            # Kiểm tra an toàn cuối cùng (Phòng trường hợp config bị ghi đè)
-            if stats_panel.shape[0] != frame_h:
-                stats_panel = cv2.resize(stats_panel, (STATS_PANEL_WIDTH, frame_h))
+            stats_panel = run_camera_detection._cached_panel if run_camera_detection._cached_panel is not None else \
+                          np.zeros((CAMERA_HEIGHT, STATS_PANEL_WIDTH, 3), dtype=np.uint8)
 
             # Ghép frame và stats panel
             try:
@@ -239,22 +248,25 @@ def run_camera_detection(
                 # Fallback: Chỉ hiển thị frame gốc nếu lỗi
                 combined_frame = annotated_frame
 
-            # Tự động scale lại nếu màn hình không đủ lớn (Tránh mất Stats Panel)
-            # Nếu màn hình nhỏ hơn 2560x1440 (2.5K), giới hạn chiều rộng hiển thị 1600px
-            if screen_w < 2560:
-                screen_max_w = 1600 
+            # 4. Hiển thị UI (Tối ưu: Chỉ scale nếu thực sự vượt quá màn hình)
+            window_name = "YOLO Edge AI - M4 Pro ANE Optimization"
+            
+            # Tính toán scale một lần duy nhất để tiết kiệm CPU
+            if not hasattr(run_camera_detection, "_ui_scale"):
                 curr_h, curr_w = combined_frame.shape[:2]
-                
-                if curr_w > screen_max_w:
-                    scale = screen_max_w / curr_w
-                    new_w = int(curr_w * scale)
-                    new_h = int(curr_h * scale)
-                    combined_frame = cv2.resize(combined_frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+                if screen_w < 2560 and curr_w > 1600:
+                    run_camera_detection._ui_scale = 1600 / curr_w
+                else:
+                    run_camera_detection._ui_scale = 1.0
+            
+            if run_camera_detection._ui_scale < 1.0:
+                new_w = int(combined_frame.shape[1] * run_camera_detection._ui_scale)
+                new_h = int(combined_frame.shape[0] * run_camera_detection._ui_scale)
+                final_display = cv2.resize(combined_frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+            else:
+                final_display = combined_frame
 
-            # Hiển thị
-            window_name = "YOLO Edge AI - Rust Engine Performance"
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-            cv2.imshow(window_name, combined_frame)
+            cv2.imshow(window_name, final_display)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
