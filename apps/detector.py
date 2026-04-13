@@ -96,6 +96,11 @@ class YoloDetector:
         # Proto tensor cache (cập nhật mỗi frame, dùng trong annotate_frame)
         self._proto: np.ndarray | None = None
 
+    @property
+    def ep(self):
+        """Trả về Execution Provider thực tế đang được sử dụng (CoreML, WebGPU, CPU)"""
+        return self.detector.ep
+
     def detect_frame(self, frame: np.ndarray) -> tuple:
         """
         Chạy detection AI và trả về (results, timing).
@@ -110,10 +115,8 @@ class YoloDetector:
             (results: list[dict], timing: dict)
         """
         try:
-            # YOLOv8 expects RGB, while OpenCV provides BGR
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-            res = self.detector.detect_to_arrow(frame_rgb)
+            # Sử dụng detect_and_draw để vẽ native Bounding Box ngay trong Rust giúp giảm gánh nặng vẽ đồ họa cho Python loop.
+            res = self.detector.detect_and_draw(frame)
             if len(res) == 2: # YOLOv26 returns only 2 caps (no mask proto)
                 arr_cap, sch_cap = res
                 proto_arr_cap, proto_sch_cap = None, None
@@ -146,8 +149,8 @@ class YoloDetector:
 
             return results_arrow.to_pylist(), timing
 
-        except AttributeError as e:
-            logger.error(f"Lỗi Arrow: {e}")
+        except Exception as e:
+            logger.error(f"Lỗi AI Pipeline: {e}")
             return [], {}
 
     def annotate_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
@@ -213,16 +216,11 @@ class YoloDetector:
 
                 # Label tại đỉnh đầu tiên
                 label_pos = (int(det["keypoints"][0][0]), int(det["keypoints"][0][1]) - 10)
-            else:
-                # Standard Rect
-                x1 = max(0, int(det["x"]))
-                y1 = max(0, int(det["y"]))
-                x2 = min(w - 1, int(det["x"] + det["w"]))
-                y2 = min(h - 1, int(det["y"] + det["h"]))
-                box_thick = 1 if (self.is_pose_model or self.is_seg_model) else 2
-                box_color = SEG_PALETTE[det["class_id"] % len(SEG_PALETTE)] if self.is_seg_model else (0, 255, 0)
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, box_thick)
-                label_pos = (x1, y1 - 10)
+            # Standard Rect - ĐÃ ĐƯỢC VẼ NATIVE TRONG RUST (Chỉ xử lý Label Pos ở đây)
+            x1 = max(0, int(det["x"]))
+            y1 = max(0, int(det["y"]))
+            # Bỏ cv2.rectangle (vì Rust đã vẽ)
+            label_pos = (x1, y1 - 10)
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             (tw, th), bl = cv2.getTextSize(label, font, 0.55, 1)
