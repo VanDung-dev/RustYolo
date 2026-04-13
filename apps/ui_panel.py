@@ -55,362 +55,115 @@ def create_stats_panel(
     cv2.line(panel, (15, y_offset), (width - 15, y_offset), COLORS["green"], 3)
     y_offset += 45
 
-    # FPS
-    fps = stats.get("fps", 0.0)
-    fps_color = (
-        COLORS["green"] if fps > 20
-        else COLORS["yellow"] if fps > 10
-        else COLORS["red"]
-    )
-    cv2.putText(
-        panel,
-        "AI FPS:",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    cv2.putText(
-        panel,
-        f"{fps:.2f}",
-        (200, y_offset),
-        font,
-        font_scale + 0.2,
-        fps_color,
-        3,
-    )
+    # FPS Section
+    actual_fps = stats.get("fps", 0.0)
+    engine_fps = stats.get("engine_fps", 0.0)
+    
+    fps_color = COLORS["green"] if actual_fps > 55 else COLORS["yellow"] if actual_fps > 30 else COLORS["red"]
+    
+    cv2.putText(panel, "ACTUAL FPS:", (15, y_offset), font, font_scale, COLORS["white"], 2)
+    cv2.putText(panel, f"{actual_fps:.2f}", (240, y_offset), font, font_scale + 0.1, fps_color, 3)
     y_offset += line_height
+    
+    engine_color = COLORS["cyan"] if engine_fps > 60 else COLORS["yellow"]
+    cv2.putText(panel, "ENGINE FPS:", (15, y_offset), font, font_scale, (200, 200, 200), 2)
+    cv2.putText(panel, f"{engine_fps:.1f} (POTENTIAL)", (240, y_offset), font, font_scale, engine_color, 2)
+    y_offset += line_height + 10
 
-    # AI Latency
-    ai_latency = stats.get("ai_latency", 0.0)
-    ai_latency_color = (
-        COLORS["green"] if ai_latency < 50
-        else COLORS["yellow"] if ai_latency < 100
-        else COLORS["red"]
-    )
-    cv2.putText(
-        panel,
-        "AI Latency:",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    cv2.putText(
-        panel,
-        f"{ai_latency:.2f} ms",
-        (201, y_offset),
-        font,
-        font_scale,
-        ai_latency_color,
-        2,
-    )
-    y_offset += line_height
-
-    # Rust Latency Breakdown
+    # AI Latency Breakdown
     pre_ms  = stats.get("preprocess_ms", 0.0)
     inf_ms  = stats.get("inference_ms",  0.0)
     nms_ms  = stats.get("nms_ms",        0.0)
+    total_ms = pre_ms + inf_ms + nms_ms
 
-    cv2.putText(panel, "Preprocess:", (15, y_offset), font,
-                font_scale - 0.1, COLORS["gray"], 1)
-    cv2.putText(panel, f"{pre_ms:.1f} ms", (200, y_offset), font,
-                font_scale - 0.1, COLORS["cyan"], 2)
-    y_offset += int(line_height * 0.8)
+    ai_latency_color = COLORS["green"] if total_ms < 16.6 else COLORS["yellow"] if total_ms < 33.3 else COLORS["red"]
+    
+    cv2.putText(panel, "TOTAL LATENCY:", (15, y_offset), font, font_scale, COLORS["white"], 2)
+    cv2.putText(panel, f"{total_ms:.2f} ms", (240, y_offset), font, font_scale, ai_latency_color, 3)
+    y_offset += line_height
 
-    cv2.putText(panel, "Inference:", (15, y_offset), font,
-                font_scale - 0.1, COLORS["gray"], 1)
-    cv2.putText(panel, f"{inf_ms:.1f} ms", (200, y_offset), font,
-                font_scale - 0.1, COLORS["yellow"], 2)
-    y_offset += int(line_height * 0.8)
+    cv2.putText(panel, " - Preprocess:", (15, y_offset), font, font_scale - 0.2, COLORS["gray"], 1)
+    cv2.putText(panel, f"{pre_ms:.2f} ms", (240, y_offset), font, font_scale - 0.2, COLORS["cyan"], 1)
+    y_offset += int(line_height * 0.7)
 
-    cv2.putText(panel, "NMS:", (15, y_offset), font,
-                font_scale - 0.1, COLORS["gray"], 1)
-    cv2.putText(panel, f"{nms_ms:.1f} ms", (200, y_offset), font,
-                font_scale - 0.1, COLORS["cyan"], 2)
+    cv2.putText(panel, " - Inference:", (15, y_offset), font, font_scale - 0.2, COLORS["gray"], 1)
+    cv2.putText(panel, f"{inf_ms:.2f} ms", (240, y_offset), font, font_scale - 0.2, COLORS["yellow"], 1)
+    y_offset += int(line_height * 0.7)
+
+    cv2.putText(panel, " - NMS/Post:", (15, y_offset), font, font_scale - 0.2, COLORS["gray"], 1)
+    cv2.putText(panel, f"{nms_ms:.2f} ms", (240, y_offset), font, font_scale - 0.2, COLORS["cyan"], 1)
     y_offset += line_height
 
     # Đường phân cách
     cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
     y_offset += 35
 
-    # GPU Section
-    cv2.putText(
-        panel,
-        "GPU",
-        (15, y_offset),
-        font,
-        1.3,
-        COLORS["cyan"],
-        3,
-    )
-    y_offset += 55
+    # --- GPU Section ---
+    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
+    y_offset += 30
+    cv2.putText(panel, "CHIP GRAPHICS (GPU)", (15, y_offset), font, 1.0, COLORS["cyan"], 2)
+    y_offset += 40
 
     gpu_info = stats.get("gpu_info", {})
-
-    # GPU Name
-    cv2.putText(
-        panel,
-        f"Name: {gpu_info.get('name', 'N/A')[:35]}",
-        (15, y_offset),
-        font,
-        font_scale - 0.1,
-        COLORS["white"],
-        2,
-    )
-    y_offset += line_height
-
-    # GPU Load với progress bar
     gpu_load = gpu_info.get("load", 0.0)
-    gpu_load_color = (
-        COLORS["green"] if gpu_load < 50 
-        else COLORS["yellow"] if gpu_load < 80 
-        else COLORS["red"]
-    )
-    cv2.putText(
-        panel,
-        f"Load: {gpu_load:.2f}%",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    # Thanh progress
-    progress_x = 220
-    progress_width = 350
-    progress_y = y_offset - 14
-    cv2.rectangle(
-        panel,
-        (progress_x, progress_y),
-        (progress_x + progress_width, progress_y + 22),
-        COLORS["dark_gray"],
-        2,
-    )
-    fill_width = int(progress_width * min(gpu_load, 100) / 100)
-    if fill_width > 0:
-        cv2.rectangle(
-            panel,
-            (progress_x, progress_y),
-            (progress_x + fill_width, progress_y + 22),
-            gpu_load_color,
-            -1,
-        )
-    y_offset += line_height
-
-    # GPU Power
-    gpu_power = gpu_info.get("power", 0.0)
-    gpu_power_color = (
-        COLORS["green"] if gpu_power < 8
-        else COLORS["yellow"] if gpu_power < 15
-        else COLORS["red"]
-    )
-    cv2.putText(
-        panel,
-        f"Power:",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    cv2.putText(
-        panel,
-        f"{gpu_power:.1f} W",
-        (200, y_offset),
-        font,
-        font_scale,
-        gpu_power_color,
-        2,
-    )
-    y_offset += line_height
-
-    # GPU Temperature
-    gpu_temp = gpu_info.get("temperature", 0.0)
-    gpu_temp_color = (
-        COLORS["green"] if gpu_temp < 65
-        else COLORS["yellow"] if gpu_temp < 85
-        else COLORS["red"]
-    )
-    cv2.putText(
-        panel,
-        f"Temp:",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    cv2.putText(
-        panel,
-        f"{gpu_temp:.1f} °C",
-        (200, y_offset),
-        font,
-        font_scale,
-        gpu_temp_color,
-        2,
-    )
-    y_offset += line_height
-
-    y_offset += line_height
-
-    # Đường phân cách
-    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
-    y_offset += 35
-
-    # CPU Section
-    cv2.putText(
-        panel,
-        "CPU",
-        (15, y_offset),
-        font,
-        1.3,
-        COLORS["cyan"],
-        3,
-    )
-    y_offset += 55
-
-    # CPU Usage
-    cpu_usage = stats.get("cpu_usage", 0.0)
-    cpu_usage_color = (
-        COLORS["green"] if cpu_usage < 50 
-        else COLORS["yellow"] if cpu_usage < 80 
-        else COLORS["red"]
-    )
-    cv2.putText(
-        panel,
-        f"Usage: {cpu_usage:.2f}%",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    # Progress bar cho CPU
-    progress_y = y_offset - 14
-    cv2.rectangle(
-        panel,
-        (progress_x, progress_y),
-        (progress_x + progress_width, progress_y + 22),
-        COLORS["dark_gray"],
-        2,
-    )
-    fill_width = int(progress_width * min(cpu_usage, 100) / 100)
-    if fill_width > 0:
-        cv2.rectangle(
-            panel,
-            (progress_x, progress_y),
-            (progress_x + fill_width, progress_y + 22),
-            cpu_usage_color,
-            -1,
-        )
-    y_offset += line_height
-
-    # CPU Temperature
-    cpu_temp = stats.get("cpu_temp", 0.0)
-    dt_dt = stats.get("dt_dt", 0.0)
     
-    if cpu_temp > 0:
-        cpu_temp_color = (
-            COLORS["green"] if cpu_temp < 60
-            else COLORS["yellow"] if cpu_temp < 80
-            else COLORS["red"]
-        )
-        cv2.putText(
-            panel,
-            f"Temp: {cpu_temp:.2f}°C",
-            (15, y_offset),
-            font,
-            font_scale,
-            cpu_temp_color,
-            2,
-        )
-        
-        # Thêm Thermal Gradient (dT/dt)
-        dt_color = (
-            COLORS["white"] if abs(dt_dt) < 0.1 
-            else COLORS["yellow"] if dt_dt < 0.5 
-            else COLORS["red"]
-        )
-        cv2.putText(
-            panel,
-            f"dT/dt: {dt_dt:+.2f} °C/s",
-            (250, y_offset),
-            font,
-            font_scale - 0.1,
-            dt_color,
-            2,
-        )
-    else:
-        cv2.putText(
-            panel,
-            "Temp: N/A",
-            (15, y_offset),
-            font,
-            font_scale,
-            COLORS["gray"],
-            2,
-        )
-    y_offset += line_height
+    cv2.putText(panel, f"Load: {gpu_load:.1f}%", (15, y_offset), font, font_scale - 0.1, COLORS["white"], 1)
+    
+    progress_x = 180
+    progress_width = 280
+    progress_y = y_offset - 12
+    cv2.rectangle(panel, (progress_x, progress_y), (progress_x + progress_width, progress_y + 16), COLORS["dark_gray"], -1)
+    fill_w = int(progress_width * (gpu_load / 100.0))
+    if fill_w > 0:
+        cv2.rectangle(panel, (progress_x, progress_y), (progress_x + fill_w, progress_y + 16), COLORS["cyan"], -1)
+    y_offset += 30
 
-    # Đường phân cách
-    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
+    cv2.putText(panel, f"Temp: {gpu_info.get('temperature', 0.0):.1f} C", (15, y_offset), font, font_scale - 0.2, COLORS["gray"], 1)
+    cv2.putText(panel, f"Power: {gpu_info.get('power', 0.0):.1f} W", (230, y_offset), font, font_scale - 0.2, COLORS["gray"], 1)
     y_offset += 35
 
-    # Memory Section
+    # --- ANE Section (Apple Neural Engine) ---
+    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
+    y_offset += 30
+    cv2.putText(panel, "NEURAL ENGINE (ANE)", (15, y_offset), font, 1.0, COLORS["green"], 2)
+    y_offset += 40
+
+    ane_info = stats.get("ane_info", {})
+    ane_load = ane_info.get("load", 0.0)
+    ane_status = ane_info.get("status", "Idle")
+    
+    status_color = COLORS["green"] if ane_status == "Active" else COLORS["gray"]
+    cv2.putText(panel, f"Status: {ane_status}", (15, y_offset), font, font_scale - 0.1, status_color, 2)
+    y_offset += 30
+
+    cv2.putText(panel, f"AI Load: {ane_load:.1f}%", (15, y_offset), font, font_scale - 0.1, COLORS["white"], 1)
+    
+    ane_progress_y = y_offset - 12
+    cv2.rectangle(panel, (progress_x, ane_progress_y), (progress_x + progress_width, ane_progress_y + 16), COLORS["dark_gray"], -1)
+    ane_fill_w = int(progress_width * (ane_load / 100.0))
+    if ane_fill_w > 0:
+        cv2.rectangle(panel, (progress_x, ane_progress_y), (progress_x + ane_fill_w, ane_progress_y + 16), COLORS["green"], -1)
+    y_offset += 45
+
+    # --- System Memory Section ---
+    cv2.line(panel, (15, y_offset), (width - 15, y_offset), (80, 80, 80), 2)
+    y_offset += 30
     mem_info = stats.get("memory_usage", {})
-    cv2.putText(
-        panel,
-        "MEMORY",
-        (15, y_offset),
-        font,
-        1.3,
-        COLORS["cyan"],
-        3,
-    )
-    y_offset += 55
-
-    cv2.putText(
-        panel,
-        f"Used: {mem_info.get('used', 'N/A')} / {mem_info.get('total', 'N/A')}",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    y_offset += line_height
-
+    cv2.putText(panel, "SYSTEM MEMORY", (15, y_offset), font, 1.0, COLORS["yellow"], 2)
+    y_offset += 40
+    
     mem_percent = mem_info.get("percent", 0.0)
-    mem_color = COLORS["green"] if mem_percent < 50 else COLORS["yellow"] if mem_percent < 80 else COLORS["red"]
-    cv2.putText(
-        panel,
-        f"Usage: {mem_percent:.2f}%",
-        (15, y_offset),
-        font,
-        font_scale,
-        COLORS["white"],
-        2,
-    )
-    # Progress bar cho Memory
-    progress_y = y_offset - 14
-    cv2.rectangle(
-        panel,
-        (progress_x, progress_y),
-        (progress_x + progress_width, progress_y + 22),
-        COLORS["dark_gray"],
-        2,
-    )
-    fill_width = int(progress_width * min(mem_percent, 100) / 100)
-    if fill_width > 0:
-        cv2.rectangle(
-            panel,
-            (progress_x, progress_y),
-            (progress_x + fill_width, progress_y + 22),
-            mem_color,
-            -1,
-        )
+    cv2.putText(panel, f"Usage: {mem_percent:.1f}%", (15, y_offset), font, font_scale - 0.1, COLORS["white"], 1)
+    
+    mem_progress_y = y_offset - 12
+    cv2.rectangle(panel, (progress_x, mem_progress_y), (progress_x + progress_width, mem_progress_y + 16), COLORS["dark_gray"], -1)
+    mem_fill_w = int(progress_width * (mem_percent / 100.0))
+    if mem_fill_w > 0:
+        cv2.rectangle(panel, (progress_x, mem_progress_y), (progress_x + mem_fill_w, mem_progress_y + 16), COLORS["yellow"], -1)
+    
+    y_offset += 30
+    cv2.putText(panel, f"RAM: {mem_info.get('used', 'N/A')} / {mem_info.get('total', 'N/A')}", (15, y_offset), font, font_scale - 0.2, COLORS["gray"], 1)
+
+    return panel
 
     return panel
