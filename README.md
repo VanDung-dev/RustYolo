@@ -14,7 +14,7 @@ Tối ưu mô hình YOLO hiệu suất cao, đa nền tảng với kiến trúc 
 | Đa luồng | Rayon data parallelism (NMS & Preprocess)             |
 | Xử lý ảnh | Kornia CPU optimized (SIMD acceleration)              |
 | Monitoring | Native System Telemetry (CPU, GPU, Thermal)           |
-| Latency yolov8n | ~23ms (CoreML), ~26ms (WebGPU) trên M4 Pro            |
+| Latency yolov8n | ~13ms (CoreML), ~13ms (WebGPU) trên M4 Pro            |
 
 ---
 
@@ -86,14 +86,14 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Normal
-    Normal --> Warning: Nhiệt độ > 82°C\nhoặc dT/dt > 0.4 °C/s
-    Warning --> Throttling: Nhiệt độ > 88°C
-    Throttling --> Warning: Nhiệt độ giảm < 85°C
-    Warning --> Normal: Nhiệt độ giảm < 78°C
+    Normal --> Warning: Nhiệt độ > 85°C
+    Warning --> Throttling: Nhiệt độ > 92°C
+    Throttling --> Warning: Nhiệt độ giảm < 90°C
+    Warning --> Normal: Nhiệt độ giảm < 82°C
 
     Normal: ✅ Chạy tối đa tốc độ\nKhông có delay
-    Warning: ⚠️ Thêm 10ms delay mỗi frame\nGiảm tải chủ động
-    Throttling: 🔴 Thêm 30ms delay mỗi frame\nBảo vệ phần cứng
+    Warning: ⚠️ Thêm 5ms delay mỗi frame\nGiảm tải chủ động
+    Throttling: 🔴 Thêm 20ms delay mỗi frame\nBảo vệ phần cứng
 ```
 
 ---
@@ -186,14 +186,43 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 
 **Kiến trúc không block UI**: Luôn chạy camera 60fps mượt mà 100% bất kể tốc độ model. Video không bao giờ bị đứng hay giật lag. Chỉ có bounding box cập nhật theo tốc độ inference AI.
 
-| Model | AI Latency | AI FPS | Camera Display FPS | Trải nghiệm người dùng |
-|---|---|--------|---|-------------------|
-| yolov8n | 23.5 ms | 40 fps | 60 fps | Mượt nhất         |
-| yolov8s | 28.5 ms | 35 fps | 60 fps | Mượt              |
-| yolov8m | 38.5 ms | 26 fps | 60 fps | Ổn định      |
-| yolov8l | 48.5 ms | 21 fps | 60 fps | Hơi chậm              |
-| yolov8x | 60.5 ms | 16 fps | 60 fps | Chậm              |
+### 1. Apple CoreML (Tối ưu nhất cho Mac)
+| Model | AI Latency | AI FPS    | Camera FPS | Trải nghiệm |
+|---|---|-----------|---|---|
+| yolov8n | ~12.9 ms | ~77.9 fps | 60 fps | Cực kỳ mượt |
+| yolov8s | ~19.4 ms | ~50.6 fps | 60 fps | Rất mượt |
+| yolov8m | ~26.5 ms | ~36.5 fps | 60 fps | Mượt |
+| yolov8l | ~37.0 ms | ~27.4 fps | 60 fps | Ổn định |
+| yolov8x | ~48.1 ms | ~21.6 fps | 60 fps | Ổn định |
 
+### 2. WebGPU (Đa nền tảng / GPU chung)
+| Model | AI Latency | AI FPS | Camera FPS | Trải nghiệm |
+|---|------------|---|---|---|
+| yolov8n | ~12.8 ms   | ~78.1 fps | 60 fps | Cực kỳ mượt |
+| yolov8s | ~19.8 ms   | ~42.8 fps | 60 fps | Rất mượt |
+| yolov8m | ~49.1 ms   | ~20.3 fps | 60 fps | Ổn định |
+| yolov8l | ~87.2 ms   | ~11.5 fps | 60 fps | Thấp |
+| yolov8x | ~131.2 ms  | ~7.6 fps | 60 fps | Rất chậm |
+
+### 3. CPU thuần (Không tăng tốc GPU)
+| Model | AI Latency | AI FPS | Camera FPS | Trải nghiệm |
+|---|---|---|---|---|
+| yolov8n | ~33.4 ms | ~30.0 fps | 60 fps | Mượt |
+| yolov8s | ~68.6 ms | ~14.6 fps | 60 fps | Thấp |
+| yolov8m | ~139.5 ms | ~7.2 fps | 60 fps | Rất chậm |
+| yolov8l | ~263.2 ms | ~3.8 fps | 60 fps | Lag |
+| yolov8x | ~364.4 ms | ~2.7 fps | 60 fps | Rất lag |
+
+> **Tổng kết**: 
+> * **CoreML** là lựa chọn số 1 trên macOS, mang lại tốc độ và hiệu suất năng lượng tốt nhất.
+> * **WebGPU** là giải pháp cân bằng, hiệu năng cực tốt cho các model nhẹ và có khả năng tương thích cao.
+> * **CPU** chỉ nên dùng cho mục đích kiểm thử hoặc trên các hệ thống không có GPU hỗ trợ.
+
+### 📊 Biểu đồ so sánh hiệu năng (Python High-Quality)
+
+![Performance Comparison](output/performance_chart.webp)
+
+![FPS Comparison](output/fps_chart.webp)
 ---
 
 ## 🔧 Tính năng
@@ -209,6 +238,7 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 * Hỗ trợ toàn bộ dòng YOLO như v8, v11, v26
 * Adaptive Thermal Scheduling tự động điều tiết tải
 * Non-blocking UI luôn mượt 60fps
+* Tự động tối ưu hóa giao diện cho màn hình Retina/High-DPI (macOS)
 
 ---
 
