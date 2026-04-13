@@ -34,6 +34,7 @@ fn rust_yolo(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<YoloDetection>()?;
     m.add_class::<yolo::YoloArchitecture>()?;
     m.add_class::<yolo::YoloTask>()?;
+    m.add_class::<yolo::ExecutionProviderType>()?;
 
     Ok(())
 }
