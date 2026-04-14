@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 mod ffi;
 pub mod image_proc;
 mod monitor;
+mod security;
 mod v8;
 mod v26;
 mod yolo;
