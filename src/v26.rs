@@ -403,16 +403,6 @@ impl YoloV26Detector {
         let outputs = py.detach(|| self.session.run(ort::inputs![input_tensor])).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         self.last_inference_ms = t_infer.elapsed().as_secs_f64() * 1000.0;
 
-        // Logging hiệu suất cực kỳ chi tiết cho M4 Pro (YOLOv26)
-        if self.last_inference_ms > 0.1 {
-            info!(
-                "🎯 Perf Metrics [v26]: Pre={:.2}ms, Infer={:.2}ms, Total={:.2}ms | FPS: {:.1}",
-                self.last_preprocess_ms,
-                self.last_inference_ms,
-                self.last_preprocess_ms + self.last_inference_ms,
-                1000.0 / (self.last_preprocess_ms + self.last_inference_ms).max(0.1)
-            );
-        }
 
         let t_decode = Instant::now();
         let mut detections = Vec::with_capacity(32);

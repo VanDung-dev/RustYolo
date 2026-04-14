@@ -497,16 +497,6 @@ impl YoloV8Detector {
             })?;
         self.last_inference_ms = t_infer.elapsed().as_secs_f64() * 1000.0;
 
-        // Logging hiệu suất cực kỳ chi tiết cho M4 Pro
-        if self.last_inference_ms > 0.1 {
-            info!(
-                "🚀 Perf Metrics [v8]: Pre={:.2}ms, Infer={:.2}ms, Total={:.2}ms | FPS: {:.1}",
-                self.last_preprocess_ms,
-                self.last_inference_ms,
-                self.last_preprocess_ms + self.last_inference_ms,
-                1000.0 / (self.last_preprocess_ms + self.last_inference_ms).max(0.1)
-            );
-        }
 
         let out_value = &outputs["output0"];
         let out_extract = out_value.try_extract_tensor::<f32>().map_err(|e| {
