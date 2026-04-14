@@ -58,14 +58,28 @@ def create_stats_panel(
     y_offset += 35
 
     # FPS Section
+    # CAMERA FPS: Tốc độ hardware của camera (cố định 60fps theo cấu hình)
+    # ACTUAL FPS: Số frame thực tế xử lý/hiển thị (phụ thuộc pipeline)
+    # ENGINE FPS: Tốc độ tối đa của AI model (1000ms / latency)
+    
+    # Camera hardware FPS
+    CAMERA_FPS = 60  # Cấu hình trong main.py: CAP_PROP_FPS = 60
+    camera_color = COLORS["green"] if CAMERA_FPS == 60 else COLORS["yellow"]
+    draw_text("CAMERA FPS: ", (20, y_offset), FONT_SUB, (180, 180, 180))
+    draw_text(f"{CAMERA_FPS}", (240, y_offset), FONT_MAIN, camera_color)
+    y_offset += 35
+    
     actual_fps = stats.get("fps", 0.0)
     engine_fps = stats.get("engine_fps", 0.0)
+    
+    # Actual FPS <= Engine FPS là bình thường (do pipeline delays, frame drops)
     fps_color = COLORS["green"] if actual_fps > 55 else COLORS["yellow"] if actual_fps > 30 else COLORS["red"]
     
     draw_text("ACTUAL FPS:", (20, y_offset), FONT_MAIN, COLORS["white"])
     draw_text(f"{actual_fps:.2f}", (240, y_offset - 2), FONT_HEADER, fps_color)
     y_offset += 40
     
+    # Engine FPS = 1000ms / latency_ms (tốc độ tối đa AI có thể đạt được)
     engine_color = COLORS["cyan"] if engine_fps > 60 else COLORS["yellow"]
     draw_text("ENGINE FPS:", (20, y_offset), FONT_MAIN, (200, 200, 200))
     draw_text(f"{engine_fps:.1f} (MAX)", (240, y_offset), FONT_MAIN, engine_color)
@@ -134,6 +148,14 @@ def create_stats_panel(
     y_offset += 35
     y_offset = draw_progress("Usage:", mem_info.get("percent", 0.0), COLORS["yellow"], y_offset)
     draw_text(f"RAM: {mem_info.get('used', 'N/A')} / {mem_info.get('total', 'N/A')}", (30, y_offset), FONT_SMALL, COLORS["gray"])
+    y_offset += 45
+    
+    # Hướng dẫn thoát
+    draw.line([(15, y_offset), (width - 15, y_offset)], fill=(80, 80, 80), width=1)
+    y_offset += 25
+    draw_text("CONTROLS", (20, y_offset), FONT_MAIN, COLORS["white"])
+    y_offset += 35
+    draw_text("Press 'q' to quit", (30, y_offset), FONT_SUB, COLORS["gray"])
 
     # 3. Chuyển ngược lại numpy BGR
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
