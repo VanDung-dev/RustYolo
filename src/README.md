@@ -13,6 +13,7 @@ Thư mục này chứa toàn bộ mã nguồn **Native Core** của hệ thống
 | `monitor.rs` | Hệ thống theo dõi hiệu năng native (CPU, GPU, Nhiệt độ, dT/dt). |
 | `ffi.rs` | Cầu nối **Apache Arrow**, cho phép truyền dữ liệu lớn giữa Rust và Python mà không cần copy (Zero-copy). |
 | `image_proc.rs` | Tối ưu hóa xử lý ảnh sử dụng Kornia và SIMD. |
+| `security.rs` | Các hàm validate bảo mật (Path Traversal, Buffer Overflow, Input Validation). |
 
 ## ⚙️ Luồng thực thi (Pipeline)
 

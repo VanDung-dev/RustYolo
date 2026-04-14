@@ -187,8 +187,9 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 **Kiến trúc không block UI**: Luôn chạy camera 60fps mượt mà 100% bất kể tốc độ model. Video không bao giờ bị đứng hay giật lag. Chỉ có bounding box cập nhật theo tốc độ inference AI.
 
 ### 1. Apple CoreML (Tối ưu nhất cho Mac)
-| Model | AI Latency | AI FPS    | Camera FPS | Trải nghiệm |
-|---|---|-----------|---|---|
+
+| Model | TOTAL LATAENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
+|---|---|---|---|---|
 | yolov8n | ~12.9 ms | ~77.9 fps | 60 fps | Cực kỳ mượt |
 | yolov8s | ~19.4 ms | ~50.6 fps | 60 fps | Rất mượt |
 | yolov8m | ~26.5 ms | ~36.5 fps | 60 fps | Mượt |
@@ -196,8 +197,9 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 | yolov8x | ~48.1 ms | ~21.6 fps | 60 fps | Ổn định |
 
 ### 2. WebGPU (Đa nền tảng / GPU chung)
-| Model | AI Latency | AI FPS | Camera FPS | Trải nghiệm |
-|---|------------|---|---|---|
+
+| Model | TOTAL LATENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
+|---|---|---|---|---|
 | yolov8n | ~12.8 ms   | ~78.1 fps | 60 fps | Cực kỳ mượt |
 | yolov8s | ~19.8 ms   | ~42.8 fps | 60 fps | Rất mượt |
 | yolov8m | ~49.1 ms   | ~20.3 fps | 60 fps | Ổn định |
@@ -205,7 +207,8 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 | yolov8x | ~131.2 ms  | ~7.6 fps | 60 fps | Rất chậm |
 
 ### 3. CPU thuần (Không tăng tốc GPU)
-| Model | AI Latency | AI FPS | Camera FPS | Trải nghiệm |
+
+| Model | TOTAL LATAENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
 |---|---|---|---|---|
 | yolov8n | ~33.4 ms | ~30.0 fps | 60 fps | Mượt |
 | yolov8s | ~68.6 ms | ~14.6 fps | 60 fps | Thấp |
