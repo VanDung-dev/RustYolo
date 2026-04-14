@@ -181,10 +181,7 @@ class YoloDetector:
         if self.is_seg_model and self._proto is not None:
             annotated = self._draw_seg_masks(annotated, results, h, w)
 
-        # 2. Chuyển sang PIL để vẽ Boxes và Label đẹp
-        pil_img = Image.fromarray(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
-        draw = ImageDraw.Draw(pil_img)
-
+        # 2. Vẽ Bounding Boxes và Labels bằng OpenCV (Native - Cực nhanh)
         for det in results:
             conf = det["confidence"]
             class_id = det["class_id"]
@@ -194,21 +191,20 @@ class YoloDetector:
             y2 = min(h - 1, int(det["y"] + det["h"]))
 
             # Màu sắc
-            box_color_bgr = SEG_PALETTE[class_id % len(SEG_PALETTE)] if self.is_seg_model else (0, 255, 0)
-            box_color_rgb = (box_color_bgr[2], box_color_bgr[1], box_color_bgr[0])
+            box_color = SEG_PALETTE[class_id % len(SEG_PALETTE)] if self.is_seg_model else (0, 255, 0)
             box_thick = 1 if (self.is_pose_model or self.is_seg_model) else 2
 
             # Vẽ Bounding Box
             if not self.is_obb_model:
-                draw.rectangle([x1, y1, x2, y2], outline=box_color_rgb, width=box_thick)
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, box_thick)
 
-            # Vẽ OBB
+            # Vẽ OBB (Vẽ trực tiếp trên OpenCV)
             if self.is_obb_model and len(det.get("keypoints", [])) >= 4:
-                pts = [(int(kp[0]), int(kp[1])) for kp in det["keypoints"][:4]]
-                draw.polygon(pts, outline=(255, 255, 0), width=2)
-                label_pos = (pts[0][0], pts[0][1] - 18)
+                pts = np.array([(int(kp[0]), int(kp[1])) for kp in det["keypoints"][:4]], np.int32)
+                cv2.polylines(annotated, [pts], True, (0, 255, 255), 2, cv2.LINE_AA)
+                label_y = pts[0][1] - 10
             else:
-                label_pos = (x1, y1 - 18)
+                label_y = y1 - 10
 
             # Label Text
             if self.is_pose_model:
@@ -220,24 +216,10 @@ class YoloDetector:
                 name = COCO_CLASSES[class_id] if class_id < len(COCO_CLASSES) else f"ID:{class_id}"
                 label_text = f"{name} {conf:.2f}"
 
-            # Vẽ Nhãn (Background + Text) bằng PIL
-            if FONT_LABEL:
-                # Tính toán kích thước text bằng PIL
-                bbox = draw.textbbox((x1, label_pos[1]), label_text, font=FONT_LABEL)
-                # Đảm bảo không tràn mép trên
-                offset_y = 0
-                if bbox[1] < 0: offset_y = -bbox[1] + 5
-                
-                new_bbox = (bbox[0], bbox[1] + offset_y, bbox[2], bbox[3] + offset_y)
-                # TÔI ƯU: Nền nhãn màu đen, viền vẫn giữ màu theo class
-                draw.rectangle(new_bbox, fill=(0, 0, 0))
-                draw.text((x1, label_pos[1] + offset_y), label_text, font=FONT_LABEL, fill=(255, 255, 255))
-            else:
-                # Fallback nếu không load được font
-                draw.text((x1, label_pos[1]), label_text, fill=(255, 255, 255))
-
-        # 3. Chuyển ngược lại OpenCV
-        annotated = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            # Vẽ Label Background + Text bằng OpenCV (Tiết kiệm 5-10ms so với PIL)
+            (text_w, text_h), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+            cv2.rectangle(annotated, (x1, label_y - text_h - baseline), (x1 + text_w, label_y + baseline), (0, 0, 0), -1)
+            cv2.putText(annotated, label_text, (x1, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
         # 4. Vẽ Skeleton (Vẽ lại bằng OpenCV vì logic skeleton phức tạp)
         if self.is_pose_model:
@@ -359,21 +341,7 @@ class YoloDetector:
         cv2.rectangle(overlay, (10, 10), (panel_w, panel_h), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.6, annotated, 0.4, 0, annotated)
         
-        # Chuyển sang PIL
-        pil_img = Image.fromarray(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
-        draw = ImageDraw.Draw(pil_img)
-        
-        try:
-            # Tăng size tối thiểu lên 26 cho Classification
-            font_title = ImageFont.truetype(FONT_PATH, 32)
-            font_main = ImageFont.truetype(FONT_PATH, 26)
-        except Exception:
-            font_title = font_main = None
-
-        # Tiêu đề
-        draw.text((20, 25), "🏆 Top Classification:", font=font_title, fill=(255, 255, 255))
-        
-        # Hiển thị từng class
+        # Tối ưu: Vẽ trực tiếp bằng OpenCV để tránh conversion
         for i, det in enumerate(results):
             class_id = det["class_id"]
             conf = det["confidence"]
@@ -381,18 +349,18 @@ class YoloDetector:
             label = IMAGENET_CLASSES[class_id] if 0 <= class_id < len(IMAGENET_CLASSES) else f"ID:{class_id}"
             y_pos = 75 + (i * 35)
             
-            # Vẽ text
-            draw.text((25, y_pos), f"#{i+1}", font=font_main, fill=(0, 255, 0))
-            draw.text((70, y_pos), f"{label[:25]}", font=font_main, fill=(255, 255, 255))
+            # Vẽ text bằng OpenCV
+            cv2.putText(annotated, f"#{i+1}", (25, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1, cv2.LINE_AA)
+            cv2.putText(annotated, label[:25], (70, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
             
-            # Vẽ bar background (Dùng lại cv2 hoặc tiếp tục PIL)
+            # Vẽ bar
             bar_start_x = 240
             bar_max_w = 120
             bar_w = int(conf * bar_max_w)
-            draw.rectangle([bar_start_x, y_pos + 4, bar_start_x + bar_max_w, y_pos + 18], fill=(50, 50, 50))
-            draw.rectangle([bar_start_x, y_pos + 4, bar_start_x + bar_w, y_pos + 18], fill=(0, 255, 0))
+            cv2.rectangle(annotated, (bar_start_x, y_pos + 5), (bar_start_x + bar_max_w, y_pos + 20), (50, 50, 50), -1)
+            cv2.rectangle(annotated, (bar_start_x, y_pos + 5), (bar_start_x + bar_w, y_pos + 20), (0, 255, 0), -1)
             
             # % text
-            draw.text((bar_start_x + bar_max_w + 5, y_pos), f"{conf*100:.1f}%", font=font_main, fill=(0, 255, 0))
+            cv2.putText(annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1, cv2.LINE_AA)
             
-        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        return annotated
