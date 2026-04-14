@@ -11,6 +11,7 @@ import numpy as np
 # Cấu hình Camera
 CAMERA_WIDTH = 1920
 CAMERA_HEIGHT = 1080
+CAMERA_FPS = 60  # Tốc độ khung hình mặc định của camera
 
 # Cấu hình UI
 STATS_PANEL_WIDTH = 620

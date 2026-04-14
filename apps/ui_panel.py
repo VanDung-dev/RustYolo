@@ -14,7 +14,7 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 from typing import Any
 
-from .config import COLORS, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT
+from .config import COLORS, STATS_PANEL_WIDTH, STATS_PANEL_HEIGHT, CAMERA_FPS
 
 # Cache font JetBrains Mono
 FONT_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "JetBrainsMonoNF.ttf")
@@ -62,11 +62,10 @@ def create_stats_panel(
     # ACTUAL FPS: Số frame thực tế xử lý/hiển thị (phụ thuộc pipeline)
     # ENGINE FPS: Tốc độ tối đa của AI model (1000ms / latency)
     
-    # Camera hardware FPS
-    CAMERA_FPS = 60  # Cấu hình trong main.py: CAP_PROP_FPS = 60
+    # Camera hardware FPS (từ config)
     camera_color = COLORS["green"] if CAMERA_FPS == 60 else COLORS["yellow"]
     draw_text("CAMERA FPS: ", (20, y_offset), FONT_SUB, (180, 180, 180))
-    draw_text(f"{CAMERA_FPS}", (240, y_offset), FONT_MAIN, camera_color)
+    draw_text(f"{CAMERA_FPS}", (260, y_offset), FONT_MAIN, camera_color)
     y_offset += 35
     
     actual_fps = stats.get("fps", 0.0)
@@ -76,13 +75,13 @@ def create_stats_panel(
     fps_color = COLORS["green"] if actual_fps > 55 else COLORS["yellow"] if actual_fps > 30 else COLORS["red"]
     
     draw_text("ACTUAL FPS:", (20, y_offset), FONT_MAIN, COLORS["white"])
-    draw_text(f"{actual_fps:.2f}", (240, y_offset - 2), FONT_HEADER, fps_color)
+    draw_text(f"{actual_fps:.2f}", (260, y_offset - 2), FONT_HEADER, fps_color)
     y_offset += 40
     
     # Engine FPS = 1000ms / latency_ms (tốc độ tối đa AI có thể đạt được)
     engine_color = COLORS["cyan"] if engine_fps > 60 else COLORS["yellow"]
     draw_text("ENGINE FPS:", (20, y_offset), FONT_MAIN, (200, 200, 200))
-    draw_text(f"{engine_fps:.1f} (MAX)", (240, y_offset), FONT_MAIN, engine_color)
+    draw_text(f"{engine_fps:.1f} (MAX)", (260, y_offset), FONT_MAIN, engine_color)
     y_offset += 50
 
     # Latency Breakdown
@@ -93,7 +92,7 @@ def create_stats_panel(
     ai_color = COLORS["green"] if total_ms < 16.6 else COLORS["yellow"]
     
     draw_text("TOTAL LATENCY:", (20, y_offset), FONT_MAIN, COLORS["white"])
-    draw_text(f"{total_ms:.2f} ms", (240, y_offset), FONT_MAIN, ai_color)
+    draw_text(f"{total_ms:.2f} ms", (260, y_offset), FONT_MAIN, ai_color)
     y_offset += 35
 
     draw_text(f" - Pre: {pre_ms:.2f} ms", (30, y_offset), FONT_SUB, COLORS["gray"])
@@ -107,7 +106,7 @@ def create_stats_panel(
     def draw_progress(title, value, color_bgr, current_y):
         draw_text(title, (20, current_y), FONT_SUB, COLORS["white"])
         # Thanh progress
-        px, py, pw, ph = 180, current_y + 4, 280, 14
+        px, py, pw, ph = 150, current_y + 4, 300, 24
         draw.rectangle([px, py, px + pw, py + ph], fill=(40, 40, 40))
         fill_w = int(pw * (value / 100.0))
         if fill_w > 0:

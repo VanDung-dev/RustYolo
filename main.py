@@ -19,6 +19,7 @@ import numpy as np
 from apps.config import (
     CAMERA_WIDTH,
     CAMERA_HEIGHT,
+    CAMERA_FPS,
     STATS_PANEL_WIDTH,
     STATS_PANEL_HEIGHT,
     DEFAULT_CONFIDENCE,
@@ -38,13 +39,13 @@ logger = logging.getLogger(__name__)
 
 class VideoStream:
     """Threaded video capture stream to handle I/O without blocking"""
-    def __init__(self, src=0, width=1920, height=1080):
+    def __init__(self, src=0, width=1920, height=1080, fps=60):
         self.stream = cv2.VideoCapture(src)
         
-        # Cấu hình camera độ phân giải cao và 60fps (tuỳ phần cứng)
+        # Cấu hình camera độ phân giải cao và fps từ config
         self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.stream.set(cv2.CAP_PROP_FPS, 60)
+        self.stream.set(cv2.CAP_PROP_FPS, fps)
         self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         self.stream.set(cv2.CAP_PROP_AUTOFOCUS, 0)
@@ -148,7 +149,7 @@ def run_camera_detection(
     logger.info("Model đã được load thành công!")
 
     # Khởi động luồng Camera siêu tốc
-    stream = VideoStream(src=camera_id, width=CAMERA_WIDTH, height=CAMERA_HEIGHT).start()
+    stream = VideoStream(src=camera_id, width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS).start()
     time.sleep(1.0) # Đợi camera warm up
 
     ret, first_frame = stream.read()
@@ -166,7 +167,6 @@ def run_camera_detection(
         root.destroy()
         
         # Đặc biệt cho macOS: Logical pixels thường nhỏ hơn physical pixels (Retina)
-        # Chúng ta sẽ ưu tiên giữ nguyên kích thước cho dòng Mac đời mới
         if platform.system() == "Darwin":
             logger.info(f"🍎 macOS Detected: {screen_w}x{screen_h} (Logical). Tự động tối ưu cho Retina...")
             # Virtualize screen_w for Mac to avoid unnecessary scaling
