@@ -92,12 +92,11 @@ def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
             dt_dt = stats.get("dt_dt", 0.0)
             
             # Chiến lược điều tiết nhiệt thực tế cho Apple Silicon
-            # Chỉ can thiệp khi nhiệt độ thực sự cao (> 85°C)
             thermal_delay = 0
             if temp > 85.0:
-                thermal_delay = 0.005  # 5ms delay để hạ nhiệt nhẹ
+                thermal_delay = 0.002  # 2ms delay
             if temp > 92.0:
-                thermal_delay = 0.02   # 20ms delay khi rất nóng
+                thermal_delay = 0.005  # 5ms delay
             
             if thermal_delay > 0:
                 if not getattr(ai_worker_thread, "_throttling", False):
@@ -205,10 +204,13 @@ def run_camera_detection(
             if not ret or frame is None:
                 continue
 
-            # Bỏ qua resize nếu frame đã khớp độ phân giải mục tiêu
-            h, w = frame.shape[:2]
-            if h != CAMERA_HEIGHT or w != CAMERA_WIDTH:
-                # Dùng INTER_LINEAR cho tốc độ cao nhất
+            # Tối ưu: Cache trạng thái resize để tránh check shape mỗi frame
+            if not hasattr(run_camera_detection, "_needs_resize"):
+                curr_h, curr_w = frame.shape[:2]
+                run_camera_detection._needs_resize = (curr_h != CAMERA_HEIGHT or curr_w != CAMERA_WIDTH)
+                logger.info(f"Resize status: {run_camera_detection._needs_resize}")
+
+            if run_camera_detection._needs_resize:
                 frame = cv2.resize(frame, (CAMERA_WIDTH, CAMERA_HEIGHT), interpolation=cv2.INTER_LINEAR)
 
             # Gắn frame vào hàng đợi cho AI
