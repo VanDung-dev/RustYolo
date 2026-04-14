@@ -36,26 +36,25 @@ if platform.system() == "Windows":
     current_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(current_dir)
     
-    # Danh sách các đường dẫn tiềm năng chứa DLL (CUDA, WebGPU, v.v.)
-    dll_candidates = [
+    # Chỉ nạp DLL từ các đường dẫn tin cậy (Build output) để tránh DLL Hijacking.
+    TRUSTED_DLL_PATHS = [
         os.path.join(project_root, "target", "release"),
-        os.path.join(project_root, "target", "debug"),
-        # Thư mục chứa file thực thi python (đôi khi DLL được copy vào đây)
-        os.path.dirname(sys.executable),
-        # Thư mục hiện tại (apps/)
-        current_dir,
     ]
+    
+    # Chỉ nạp debug DLL nếu explicitly yêu cầu (Dev mode)
+    if os.environ.get("RUSTYOLO_DEBUG") == "1":
+        TRUSTED_DLL_PATHS.append(os.path.join(project_root, "target", "debug"))
 
-    for dll_path in dll_candidates:
+    for dll_path in TRUSTED_DLL_PATHS:
         if os.path.exists(dll_path):
             try:
                 os.add_dll_directory(dll_path)
-                logger.debug(f"🪟 Windows (Py 3.12+): Đã nạp DLL từ {dll_path}")
+                logger.debug(f"🪟 Windows (Py 3.12+): Đã nạp DLL an toàn từ {dll_path}")
             except Exception as e:
                 logger.warning(f"⚠️ Không thể nạp DLL từ {dll_path}: {e}")
 
-    # Đảm bảo PATH cũng được cập nhật cho các thư viện cũ hơn (nếu có)
-    os.environ["PATH"] = ";".join(dll_candidates) + ";" + os.environ.get("PATH", "")
+    # Cập nhật PATH chỉ với các thư mục an toàn
+    os.environ["PATH"] = ";".join(TRUSTED_DLL_PATHS) + ";" + os.environ.get("PATH", "")
 
 # Import trực tiếp Native Rust Engine đã biên dịch
 from rust_yolo import YoloV8Detector, YoloV26Detector, YoloArchitecture
