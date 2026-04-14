@@ -13,10 +13,19 @@ import cv2
 import numpy as np
 import pyarrow as pa
 import logging
+import os
+from PIL import Image, ImageDraw, ImageFont
 
 # Cấu hình logger cho module
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Cache font JetBrains Mono cho label (Size 32 cho nhãn vật thể)
+FONT_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "JetBrainsMonoNF.ttf")
+try:
+    FONT_LABEL = ImageFont.truetype(FONT_PATH, 32)
+except Exception:
+    FONT_LABEL = None
 
 # Tự động tìm DLL cho Windows (Dành cho CUDA/WebGPU)
 import platform
@@ -115,8 +124,10 @@ class YoloDetector:
             (results: list[dict], timing: dict)
         """
         try:
-            # Sử dụng detect_and_draw để vẽ native Bounding Box ngay trong Rust giúp giảm gánh nặng vẽ đồ họa cho Python loop.
-            res = self.detector.detect_and_draw(frame)
+            # TỐI ƯU: Sử dụng detect_to_arrow thay vì detect_and_draw.
+            # Vì frame trong luồng AI worker (background) là frame cũ, việc vẽ trong Rust ở đây là lãng phí.
+            # Việc vẽ sẽ được thực hiện ở annotate_frame (main thread) trên frame mới nhất.
+            res = self.detector.detect_to_arrow(frame)
             if len(res) == 2: # YOLOv26 returns only 2 caps (no mask proto)
                 arr_cap, sch_cap = res
                 proto_arr_cap, proto_sch_cap = None, None
@@ -155,83 +166,85 @@ class YoloDetector:
 
     def annotate_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
         """
-        Vẽ kết quả lên frame:
-        - Detection : bounding box xanh + label
-        - Pose      : bounding box mỏng + skeleton màu COCO
-        - Seg       : instance mask màu per-class + bounding box + label
+        Vẽ kết quả lên frame bằng PIL để hỗ trợ font JetBrains Mono.
         """
         if not results:
             return frame
 
-        annotated = frame.copy()
         h, w = frame.shape[:2]
 
-        # Classification Model (Vẽ panel riêng, không có bbox)
+        # Classification Model (Vẽ panel riêng)
         if self.is_cls_model:
-            return self._draw_classification_overlay(annotated, results)
+            return self._draw_classification_overlay(frame.copy(), results)
 
-        # Segmentation masks (vẽ trước để bbox/label ở trên)
+        # 1. Vẽ Segmentation Masks (nếu có) bằng OpenCV/NumPy trước
+        annotated = frame.copy()
         if self.is_seg_model and self._proto is not None:
             annotated = self._draw_seg_masks(annotated, results, h, w)
 
+        # 2. Chuyển sang PIL để vẽ Boxes và Label đẹp
+        pil_img = Image.fromarray(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(pil_img)
+
         for det in results:
             conf = det["confidence"]
+            class_id = det["class_id"]
             x1 = max(0, int(det["x"]))
             y1 = max(0, int(det["y"]))
             x2 = min(w - 1, int(det["x"] + det["w"]))
             y2 = min(h - 1, int(det["y"] + det["h"]))
 
+            # Màu sắc
+            box_color_bgr = SEG_PALETTE[class_id % len(SEG_PALETTE)] if self.is_seg_model else (0, 255, 0)
+            box_color_rgb = (box_color_bgr[2], box_color_bgr[1], box_color_bgr[0])
             box_thick = 1 if (self.is_pose_model or self.is_seg_model) else 2
 
-            # Màu box: theo class (seg) hoặc xanh lá (detection/pose)
-            if self.is_seg_model:
-                box_color = SEG_PALETTE[det["class_id"] % len(SEG_PALETTE)]
-            else:
-                box_color = (0, 255, 0)
+            # Vẽ Bounding Box
+            if not self.is_obb_model:
+                draw.rectangle([x1, y1, x2, y2], outline=box_color_rgb, width=box_thick)
 
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, box_thick)
-
-            # Label text
-            if self.is_pose_model:
-                label = f"Person: {conf:.2f}"
-            elif self.is_obb_model:
-                idx = det["class_id"]
-                name = DOTA_CLASSES[idx] if idx < len(DOTA_CLASSES) else f"ID:{idx}"
-                label = f"{name}: {conf:.2f}"
-            else:
-                class_id = det["class_id"]
-
-                label = f"{COCO_CLASSES[class_id]}" if class_id < len(COCO_CLASSES) else f"ID:{class_id}"
-            label = f"{label} {conf:.2f}"
-
-            # Draw Box / Poly
+            # Vẽ OBB
             if self.is_obb_model and len(det.get("keypoints", [])) >= 4:
-                # OBB: Vẽ đa giác từ 4 đỉnh
-                pts = np.array(
-                    [[int(kp[0]), int(kp[1])] for kp in det["keypoints"][:4]], np.int32).reshape((-1, 1, 2)
-                )
-                cv2.polylines(
-                    annotated, [pts], isClosed=True, color=(0, 255, 255), thickness=2, lineType=cv2.LINE_AA
-                )
+                pts = [(int(kp[0]), int(kp[1])) for kp in det["keypoints"][:4]]
+                draw.polygon(pts, outline=(255, 255, 0), width=2)
+                label_pos = (pts[0][0], pts[0][1] - 18)
+            else:
+                label_pos = (x1, y1 - 18)
 
-                # Label tại đỉnh đầu tiên
-                label_pos = (int(det["keypoints"][0][0]), int(det["keypoints"][0][1]) - 10)
-            # Standard Rect - ĐÃ ĐƯỢC VẼ NATIVE TRONG RUST (Chỉ xử lý Label Pos ở đây)
-            x1 = max(0, int(det["x"]))
-            y1 = max(0, int(det["y"]))
-            # Bỏ cv2.rectangle (vì Rust đã vẽ)
-            label_pos = (x1, y1 - 10)
+            # Label Text
+            if self.is_pose_model:
+                label_text = f"Person {conf:.2f}"
+            elif self.is_obb_model:
+                name = DOTA_CLASSES[class_id] if class_id < len(DOTA_CLASSES) else f"ID:{class_id}"
+                label_text = f"{name} {conf:.2f}"
+            else:
+                name = COCO_CLASSES[class_id] if class_id < len(COCO_CLASSES) else f"ID:{class_id}"
+                label_text = f"{name} {conf:.2f}"
 
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            (tw, th), bl = cv2.getTextSize(label, font, 0.55, 1)
-            ly1 = max(0, label_pos[1] - th - bl - 4)
-            cv2.rectangle(annotated, (label_pos[0], ly1), (label_pos[0] + tw, label_pos[1]), (0, 0, 0), -1)
-            cv2.putText(annotated, label, (label_pos[0], max(0, label_pos[1] - 4)),
-                        font, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+            # Vẽ Nhãn (Background + Text) bằng PIL
+            if FONT_LABEL:
+                # Tính toán kích thước text bằng PIL
+                bbox = draw.textbbox((x1, label_pos[1]), label_text, font=FONT_LABEL)
+                # Đảm bảo không tràn mép trên
+                offset_y = 0
+                if bbox[1] < 0: offset_y = -bbox[1] + 5
+                
+                new_bbox = (bbox[0], bbox[1] + offset_y, bbox[2], bbox[3] + offset_y)
+                # TÔI ƯU: Nền nhãn màu đen, viền vẫn giữ màu theo class
+                draw.rectangle(new_bbox, fill=(0, 0, 0))
+                draw.text((x1, label_pos[1] + offset_y), label_text, font=FONT_LABEL, fill=(255, 255, 255))
+            else:
+                # Fallback nếu không load được font
+                draw.text((x1, label_pos[1]), label_text, fill=(255, 255, 255))
 
-            # Skeleton (pose model only)
-            if self.is_pose_model and "keypoints" in det:
-                annotated = self._draw_skeleton(annotated, det, h, w)
+        # 3. Chuyển ngược lại OpenCV
+        annotated = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+        # 4. Vẽ Skeleton (Vẽ lại bằng OpenCV vì logic skeleton phức tạp)
+        if self.is_pose_model:
+            for det in results:
+                if "keypoints" in det:
+                    annotated = self._draw_skeleton(annotated, det, h, w)
 
         return annotated
 
@@ -336,64 +349,51 @@ class YoloDetector:
 
     @staticmethod
     def _draw_classification_overlay(annotated: np.ndarray, results: list) -> np.ndarray:
-        """Vẽ panel hiển thị Top-5 classification."""
+        """Vẽ panel hiển thị Top-5 classification dùng font JetBrains Mono."""
         if not results:
             return annotated
         
-        # Tạo semi-transparent overlay ở góc trái trên
         panel_w = 400
         panel_h = 30 + (len(results) * 35)
         
         overlay = annotated.copy()
         cv2.rectangle(overlay, (10, 10), (panel_w, panel_h), (0, 0, 0), -1)
-        # Alpha blending
         cv2.addWeighted(overlay, 0.6, annotated, 0.4, 0, annotated)
         
+        # Chuyển sang PIL
+        pil_img = Image.fromarray(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(pil_img)
+        
+        try:
+            # Tăng size tối thiểu lên 26 cho Classification
+            font_title = ImageFont.truetype(FONT_PATH, 32)
+            font_main = ImageFont.truetype(FONT_PATH, 26)
+        except Exception:
+            font_title = font_main = None
+
         # Tiêu đề
-        cv2.putText(
-            annotated, "🏆 Top Classification:", (20, 45), cv2.FONT_HERSHEY_SIMPLEX,
-            0.8, (255, 255, 255), 2, cv2.LINE_AA
-        )
+        draw.text((20, 25), "🏆 Top Classification:", font=font_title, fill=(255, 255, 255))
         
         # Hiển thị từng class
         for i, det in enumerate(results):
             class_id = det["class_id"]
             conf = det["confidence"]
             
-            # Lấy tên từ IMAGENET_CLASSES
-            if 0 <= class_id < len(IMAGENET_CLASSES):
-                label = IMAGENET_CLASSES[class_id]
-            else:
-                label = f"Unknown ({class_id})"
-                
-            y_pos = 85 + (i * 35)
+            label = IMAGENET_CLASSES[class_id] if 0 <= class_id < len(IMAGENET_CLASSES) else f"ID:{class_id}"
+            y_pos = 75 + (i * 35)
             
-            # Vẽ số thứ tự
-            cv2.putText(
-                annotated, f"#{i+1}", (25, y_pos), cv2.FONT_HERSHEY_SIMPLEX,
-                0.6, (0, 255, 0), 1, cv2.LINE_AA
-            )
+            # Vẽ text
+            draw.text((25, y_pos), f"#{i+1}", font=font_main, fill=(0, 255, 0))
+            draw.text((70, y_pos), f"{label[:25]}", font=font_main, fill=(255, 255, 255))
             
-            # Vẽ tên class
-            cv2.putText(
-                annotated, f"{label[:25]}", (70, y_pos), cv2.FONT_HERSHEY_SIMPLEX,
-                0.6, (255, 255, 255), 1, cv2.LINE_AA
-            )
-            
-            # Vẽ confidence bar
+            # Vẽ bar background (Dùng lại cv2 hoặc tiếp tục PIL)
             bar_start_x = 240
             bar_max_w = 120
             bar_w = int(conf * bar_max_w)
-            
-            # Bar background
-            cv2.rectangle(annotated, (bar_start_x, y_pos - 12), (bar_start_x + bar_max_w, y_pos + 2), (50, 50, 50), -1)
-            # Bar fill
-            cv2.rectangle(annotated, (bar_start_x, y_pos - 12), (bar_start_x + bar_w, y_pos + 2), (0, 255, 0), -1)
+            draw.rectangle([bar_start_x, y_pos + 4, bar_start_x + bar_max_w, y_pos + 18], fill=(50, 50, 50))
+            draw.rectangle([bar_start_x, y_pos + 4, bar_start_x + bar_w, y_pos + 18], fill=(0, 255, 0))
             
             # % text
-            cv2.putText(
-                annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA
-            )
+            draw.text((bar_start_x + bar_max_w + 5, y_pos), f"{conf*100:.1f}%", font=font_main, fill=(0, 255, 0))
             
-        return annotated
+        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
