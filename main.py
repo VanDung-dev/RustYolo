@@ -50,9 +50,8 @@ class VideoStream:
         self.stream.set(cv2.CAP_PROP_AUTOFOCUS, 0)
         self.stream.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
 
-        (self.grabbed, self.frame) = self.stream.read()
+        self.frame_queue = queue.Queue(maxsize=2)
         self.stopped = False
-        self.lock = threading.Lock()
 
     def start(self):
         t = threading.Thread(target=self.update, args=())
@@ -61,17 +60,22 @@ class VideoStream:
         return self
 
     def update(self):
-        while True:
-            if self.stopped:
-                return
+        while not self.stopped:
             (grabbed, frame) = self.stream.read()
-            with self.lock:
-                self.grabbed = grabbed
-                self.frame = frame
+            if grabbed:
+                if self.frame_queue.full():
+                    try:
+                        self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                self.frame_queue.put(frame)
 
     def read(self):
-        with self.lock:
-            return self.grabbed, self.frame
+        try:
+            # Thu thập frame mới nhất, timeout ngắn để không block main thread
+            return True, self.frame_queue.get(timeout=0.1)
+        except queue.Empty:
+            return False, None
 
     def stop(self):
         self.stopped = True
@@ -148,7 +152,8 @@ def run_camera_detection(
     stream = VideoStream(src=camera_id, width=CAMERA_WIDTH, height=CAMERA_HEIGHT).start()
     time.sleep(1.0) # Đợi camera warm up
 
-    if stream.frame is None:
+    ret, first_frame = stream.read()
+    if not ret or first_frame is None:
         logger.error(f"Không thể mở camera với ID {camera_id}")
         sys.exit(1)
 
@@ -173,8 +178,8 @@ def run_camera_detection(
         logger.warning("⚠️ Không thể lấy độ phân giải màn hình, dùng mặc định 1080p")
 
     # Queue giao tiếp Multi-threading
-    frame_queue = queue.Queue(maxsize=1)
-    result_queue = queue.Queue(maxsize=1)
+    frame_queue = queue.Queue(maxsize=2)
+    result_queue = queue.Queue(maxsize=2)
     stop_event = threading.Event()
 
     # Tạo performance monitor và chạy background thread
