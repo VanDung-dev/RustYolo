@@ -57,6 +57,8 @@ impl YoloV26Detector {
     fn new(model_path: &str, conf_threshold: f32, execution_provider: &str) -> PyResult<Self> {
         debug!("YoloV26Detector::new called with model: {}, execution_provider: {}", model_path, execution_provider);
 
+        crate::security::validate_model_path(model_path)?;
+
         let ep = match execution_provider.to_lowercase().as_str() {
             "coreml" => {
                 if !CoreML::default().is_available().unwrap_or(false) {
@@ -246,8 +248,12 @@ impl YoloV26Detector {
             .getattr("data")?
             .extract::<usize>()?;
         
+        let expected_size = width * height * 3;
+        let actual_size = numpy_array.getattr("size")?.extract::<usize>()?;
+        crate::security::validate_buffer_size(actual_size, width, height, 3)?;
+
         // Tạo mutable slice từ con trỏ (BGR/RGB)
-        let data = unsafe { std::slice::from_raw_parts_mut(data_ptr as *mut u8, width * height * 3) };
+        let data = unsafe { std::slice::from_raw_parts_mut(data_ptr as *mut u8, expected_size) };
 
         // 3. Vẽ Native Bounding Box
         let colors: [[u8; 3]; 6] = [
@@ -356,9 +362,17 @@ impl YoloV26Detector {
 
     fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize)> {
         let shape: (usize, usize, usize) = numpy_array.getattr("shape")?.extract()?;
-        let (height, width, _) = shape;
+        let (height, width, _channels) = shape;
+        
+        crate::security::validate_input_shape(width, height, _channels)?;
+
         let data_ptr = numpy_array.getattr("ctypes")?.getattr("data")?.extract::<usize>()?;
-        let raw_data = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, width * height * 3) };
+
+        let expected_size = width * height * 3;
+        let actual_size = numpy_array.getattr("size")?.extract::<usize>()?;
+        crate::security::validate_buffer_size(actual_size, width, height, 3)?;
+
+        let raw_data = unsafe { std::slice::from_raw_parts(data_ptr as *const u8, expected_size) };
         let t_pre = Instant::now();
         
         crate::image_proc::preprocess_image_kornia(
