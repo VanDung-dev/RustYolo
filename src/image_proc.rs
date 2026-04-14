@@ -91,10 +91,13 @@ pub fn draw_rect_native(
     color: [u8; 3],
     thickness: i32,
 ) {
-    let x1 = (x1.round() as i32).max(0).min(width as i32 - 1);
-    let y1 = (y1.round() as i32).max(0).min(height as i32 - 1);
-    let x2 = (x2.round() as i32).max(0).min(width as i32 - 1);
-    let y2 = (y2.round() as i32).max(0).min(height as i32 - 1);
+    let max_x = (width as i32).saturating_sub(1);
+    let max_y = (height as i32).saturating_sub(1);
+
+    let x1 = (x1.round() as i32).clamp(0, max_x);
+    let y1 = (y1.round() as i32).clamp(0, max_y);
+    let x2 = (x2.round() as i32).clamp(0, max_x);
+    let y2 = (y2.round() as i32).clamp(0, max_y);
 
     for t in 0..thickness {
         // Vẽ cạnh ngang (Trái -> Phải)
