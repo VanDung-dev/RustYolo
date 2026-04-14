@@ -42,6 +42,8 @@ pub struct PerformanceMonitor {
     ane_load: f64,
     gpu_load: f64,
     backend: ExecutionProviderType,
+    #[pyo3(get, set)]
+    pub privacy_mode: bool,
 }
 
 #[pymethods]
@@ -75,6 +77,7 @@ impl PerformanceMonitor {
             ane_load: 0.0,
             gpu_load: 0.0,
             backend: ExecutionProviderType::CPU,
+            privacy_mode: false,
         }
     }
 
@@ -216,12 +219,11 @@ impl PerformanceMonitor {
 
             let mut sum: u64 = 0;
             // Tối ưu hóa: Chỉ tính toán trung bình cho 1 phần nhỏ frame để tiết kiệm CPU
-            // do đây chỉ là ví dụ logic. Thực tế sẽ làm thermal logic cao cấp hơn.
             let step = (length / 1000).max(1);
             for i in (0..length).step_by(step) {
                 sum += *data_ptr.add(i) as u64;
             }
-            let avg = sum as f64 / (length / step) as f64;
+            let avg = if length > 0 { sum as f64 / (length / step) as f64 } else { 0.0 };
 
             let latency = start.elapsed().as_secs_f64() * 1000.0;
             self.rust_latency = latency;
@@ -284,7 +286,9 @@ impl PerformanceMonitor {
         let gpu_info = PyDict::new(py);
         
         // Xác định tên GPU
-        let gpu_name = if cfg!(target_os = "macos") {
+        let gpu_name = if self.privacy_mode {
+            "Hidden GPU".to_string()
+        } else if cfg!(target_os = "macos") {
             "Apple Silicon GPU".to_string()
         } else if !self.gpu_name_cache.is_empty() {
             self.gpu_name_cache.clone()
