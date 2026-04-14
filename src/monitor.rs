@@ -44,6 +44,10 @@ pub struct PerformanceMonitor {
     backend: ExecutionProviderType,
     #[pyo3(get, set)]
     pub privacy_mode: bool,
+    cached_cpu_usage: f32,
+    cached_mem_used_gb: f64,
+    cached_mem_total_gb: f64,
+    cached_mem_percent: f64,
 }
 
 #[pymethods]
@@ -78,6 +82,10 @@ impl PerformanceMonitor {
             gpu_load: 0.0,
             backend: ExecutionProviderType::CPU,
             privacy_mode: false,
+            cached_cpu_usage: 0.0,
+            cached_mem_used_gb: 0.0,
+            cached_mem_total_gb: 0.0,
+            cached_mem_percent: 0.0,
         }
     }
 
@@ -233,54 +241,34 @@ impl PerformanceMonitor {
     }
 
     /// Lấy tất cả stats dưới dạng Python dict
-    fn get_stats(&self, py: Python) -> Py<PyDict> {
+    fn get_stats(&mut self, py: Python) -> Py<PyDict> {
         let stats = PyDict::new(py);
 
-        let sys = self.system.lock().unwrap();
+        // Chỉ lock system khi cần thiết hoặc cache lại
+        if let Ok(sys) = self.system.try_lock() {
+             self.cached_cpu_usage = sys.global_cpu_usage();
+             self.cached_mem_used_gb = sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+             self.cached_mem_total_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+             self.cached_mem_percent = (self.cached_mem_used_gb / self.cached_mem_total_gb) * 100.0;
+        }
 
         // Frame stats
         stats.set_item(pyo3::intern!(py, "fps"), self.actual_fps).unwrap();
-        stats
-            .set_item(pyo3::intern!(py, "engine_fps"), self.engine_fps)
-            .unwrap();
-        stats
-            .set_item(pyo3::intern!(py, "ai_latency"), self.ai_latency)
-            .unwrap();
-        stats
-            .set_item(pyo3::intern!(py, "rust_latency"), self.rust_latency)
-            .unwrap();
+        stats.set_item(pyo3::intern!(py, "engine_fps"), self.engine_fps).unwrap();
+        stats.set_item(pyo3::intern!(py, "ai_latency"), self.ai_latency).unwrap();
+        stats.set_item(pyo3::intern!(py, "rust_latency"), self.rust_latency).unwrap();
 
-        // CPU info
-        let cpu_usage = sys.global_cpu_usage();
-        stats
-            .set_item(pyo3::intern!(py, "cpu_usage"), cpu_usage)
-            .unwrap();
-        stats
-            .set_item(pyo3::intern!(py, "cpu_temp"), self.current_temp)
-            .unwrap();
-        stats
-            .set_item(pyo3::intern!(py, "dt_dt"), self.dt_dt)
-            .unwrap();
+        // CPU info (Dùng cache)
+        stats.set_item(pyo3::intern!(py, "cpu_usage"), self.cached_cpu_usage).unwrap();
+        stats.set_item(pyo3::intern!(py, "cpu_temp"), self.current_temp).unwrap();
+        stats.set_item(pyo3::intern!(py, "dt_dt"), self.dt_dt).unwrap();
 
-        // Memory info
-        let mem_used = sys.used_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-        let mem_total = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-        let mem_percent = (mem_used / mem_total) * 100.0;
-
+        // Memory info (Dùng cache)
         let memory_usage = PyDict::new(py);
-        memory_usage
-            .set_item(pyo3::intern!(py, "used"), format!("{:.1} GB", mem_used))
-            .unwrap();
-        memory_usage
-            .set_item(pyo3::intern!(py, "total"), format!("{:.1} GB", mem_total))
-            .unwrap();
-        memory_usage
-            .set_item(pyo3::intern!(py, "percent"), mem_percent)
-            .unwrap();
-
-        stats
-            .set_item(pyo3::intern!(py, "memory_usage"), memory_usage)
-            .unwrap();
+        memory_usage.set_item(pyo3::intern!(py, "used"), format!("{:.1} GB", self.cached_mem_used_gb)).unwrap();
+        memory_usage.set_item(pyo3::intern!(py, "total"), format!("{:.1} GB", self.cached_mem_total_gb)).unwrap();
+        memory_usage.set_item(pyo3::intern!(py, "percent"), self.cached_mem_percent).unwrap();
+        stats.set_item(pyo3::intern!(py, "memory_usage"), memory_usage).unwrap();
 
         // Thông tin GPU
         let gpu_info = PyDict::new(py);
