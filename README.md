@@ -223,9 +223,18 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 
 ### 📊 Biểu đồ so sánh hiệu năng (Python High-Quality)
 
-![Performance Comparison](output/performance_chart.webp)
+<p align="center">
+  <img src="output/performance_chart.webp" width="600" alt="Performance Comparison Chart - Biểu đồ so sánh độ trễ infererence giữa các model YOLOv8 với CoreML, WebGPU và CPU"/>
+  <br/>
+  <em>Hình 1: Biểu đồ so sánh Total Latency (ms) giữa các model YOLOv8 (n/s/m/l/x) với CoreML, WebGPU và CPU</em>
+</p>
 
-![FPS Comparison](output/fps_chart.webp)
+<p align="center">
+  <img src="output/fps_chart.webp" width="600" alt="FPS Comparison Chart - Biểu đồ so sánh tốc độ inference FPS giữa các model YOLOv8"/>
+  <br/>
+  <em>Hình 2: Biểu đồ so sánh Engine FPS giữa các model YOLOv8 (n/s/m/l/x) với CoreML, WebGPU và CPU</em>
+</p>
+
 ---
 
 ## 🔧 Tính năng
