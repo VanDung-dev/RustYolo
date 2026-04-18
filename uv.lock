@@ -1251,34 +1251,39 @@ wheels = [
 
 [[package]]
 name = "rustyolo"
-version = "0.1.0"
-source = { virtual = "." }
+version = "0.1.1"
+source = { editable = "." }
 dependencies = [
-    { name = "matplotlib" },
     { name = "maturin" },
     { name = "numpy" },
     { name = "onnx" },
     { name = "onnxsim" },
     { name = "opencv-python" },
-    { name = "pandas" },
     { name = "pyarrow" },
-    { name = "seaborn" },
     { name = "ultralytics" },
+]
+
+[package.optional-dependencies]
+benchmark = [
+    { name = "matplotlib" },
+    { name = "pandas" },
+    { name = "seaborn" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "matplotlib", specifier = ">=3.10.0" },
+    { name = "matplotlib", marker = "extra == 'benchmark'", specifier = ">=3.10.0" },
     { name = "maturin", specifier = ">=1.11.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "onnx", specifier = ">=1.21.0" },
     { name = "onnxsim", specifier = ">=0.6.0" },
     { name = "opencv-python", specifier = ">=4.8.0" },
-    { name = "pandas", specifier = ">=3.0.0" },
+    { name = "pandas", marker = "extra == 'benchmark'", specifier = ">=3.0.0" },
     { name = "pyarrow", specifier = ">=18.0.0" },
-    { name = "seaborn", specifier = ">=0.13.0" },
+    { name = "seaborn", marker = "extra == 'benchmark'", specifier = ">=0.13.0" },
     { name = "ultralytics", specifier = ">=8.0.0" },
 ]
+provides-extras = ["benchmark"]
 
 [[package]]
 name = "scipy"

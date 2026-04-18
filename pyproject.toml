@@ -20,8 +20,9 @@ dependencies = [
     "onnx>=1.21.0",
     "onnxsim>=0.6.0",
     "maturin>=1.11.0",
-
-    # PERFORMANCE DEPENDENCIES
+]
+[project.optional-dependencies]
+benchmark = [
     "matplotlib>=3.10.0",
     "seaborn>=0.13.0",
     "pandas>=3.0.0",
