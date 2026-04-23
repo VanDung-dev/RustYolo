@@ -134,7 +134,11 @@ stateDiagram-v2
 3. Cài đặt các thư viện Python
 
     ```bash
-    pip install -r requirements.txt
+    # Cài đặt với PIP
+    pip install -e .
+    
+    # Cài đặt với UV (Khuyên dùng)
+    uv sync
     ```
 
 4. Cài đặt Rust (Biên dịch Engine)
