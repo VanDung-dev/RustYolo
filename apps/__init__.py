@@ -1,6 +1,5 @@
-# YOLOv8 Object Detection Package
 """
-Package chứa các module cho ứng dụng YOLOv8 object detection với camera.
+Package chứa các module cho ứng dụng YOLO object detection với camera.
 """
 
 from .config import (
@@ -15,6 +14,9 @@ from .config import (
 from .detector import YoloDetector
 from .performance_monitor import PerformanceMonitor
 from .ui_panel import create_stats_panel
+from .videostream import VideoStream
+from .worker import ai_worker_thread
+from .camera_app import run_camera_detection
 
 __all__ = [
     "CAMERA_WIDTH",
@@ -27,4 +29,7 @@ __all__ = [
     "YoloDetector",
     "PerformanceMonitor",
     "create_stats_panel",
+    "VideoStream",
+    "ai_worker_thread",
+    "run_camera_detection",
 ]
