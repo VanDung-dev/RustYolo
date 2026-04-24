@@ -184,6 +184,39 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
     python main.py --model yolov8n.onnx --ep cpu
     ```
 
+### 6. Sử dụng Camera từ Network Stream
+
+Ứng dụng hỗ trợ kết nối camera từ xa qua các giao thức stream:
+
+*   **RTSP Stream:**
+
+    ```bash
+    python main.py --model yolov8n.onnx --camera "rtsp://192.168.x.x:8888/stream"
+    ```
+
+*   **HTTP Stream:**
+
+    ```bash
+    python main.py --model yolov8n.onnx --camera "http://192.168.x.x:8888/video"
+    ```
+
+*   **TCP Stream (FFmpeg):**
+
+    ```bash
+    python main.py --model yolov8n.onnx --camera "tcp://192.168.x.x:8888"
+    ```
+
+*   **Camera local (mặc định):**
+
+    ```bash
+    python main.py --model yolov8n.onnx
+    ```
+
+> **Lưu ý:** 
+> - Đối với stream URL, ứng dụng sẽ không áp dụng các cấu hình độ phân giải và FPS (phụ thuộc vào server stream).
+> - Đảm bảo server stream đang chạy và port mở trước khi kết nối.
+> - OpenCV cần được build với FFMPEG support để xử lý các protocol mạng.
+
 ---
 
 ## ⚡ Performance Benchmark (Apple Silicon)
