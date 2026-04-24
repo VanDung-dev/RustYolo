@@ -1,8 +1,6 @@
 [build-system]
-requires = [
-    "setuptools>=82.0.0",
-    "wheel>=0.46.3",
-]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "rustyolo"
