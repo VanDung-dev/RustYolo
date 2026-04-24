@@ -14,7 +14,7 @@ Tối ưu mô hình YOLO hiệu suất cao, đa nền tảng với kiến trúc 
 | Đa luồng | Rayon data parallelism (NMS & Preprocess)             |
 | Xử lý ảnh | Kornia CPU optimized (SIMD acceleration)              |
 | Monitoring | Native System Telemetry (CPU, GPU, Thermal)           |
-| Latency yolov8n | ~13ms (CoreML), ~13ms (WebGPU) trên M4 Pro            |
+| Latency yolov8n | ~10.4ms (CoreML), ~11.8ms (WebGPU) trên M4 Pro            |
 
 ---
 
@@ -151,16 +151,19 @@ stateDiagram-v2
 Dự án hỗ trợ 3 kiểu build tối ưu cho từng nền tảng phần cứng khác nhau:
 
 *   **Tối ưu cho Mac (M1/M2/M3/M4/M5)**
+
     ```bash
     maturin develop --release
     ```
 
 *   **Đa nền tảng (Vulkan/Metal/DirectX) qua WebGPU**
+
     ```bash
     maturin develop --release --features webgpu
     ```
 
 ### 4. Tải mô hình Yolo và chuyển đổi thành ONNX
+
 ```bash
 python export_onnx_for_rust.py # yolov8n
 ```
@@ -170,16 +173,19 @@ python export_onnx_for_rust.py # yolov8n
 Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep` (Execution Provider) tương ứng:
 
 *   **Chạy với CoreML (MacOS):**
+
     ```bash
     python main.py --model yolov8n.onnx --ep coreml
     ```
 
 *   **Chạy với WebGPU (GPU đa nền tảng):**
+
     ```bash
     python main.py --model yolov8n.onnx --ep webgpu
     ```
 
 *   **Chạy thuần CPU (Dùng cho máy không có GPU):**
+
     ```bash
     python main.py --model yolov8n.onnx --ep cpu
     ```
@@ -212,7 +218,7 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
     python main.py --model yolov8n.onnx
     ```
 
-> **Lưu ý:** 
+> **Lưu ý:**
 > - Đối với stream URL, ứng dụng sẽ không áp dụng các cấu hình độ phân giải và FPS (phụ thuộc vào server stream).
 > - Đảm bảo server stream đang chạy và port mở trước khi kết nối.
 > - OpenCV cần được build với FFMPEG support để xử lý các protocol mạng.
@@ -227,31 +233,31 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 
 | Model | TOTAL LATAENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
 |---|---|---|---|---|
-| yolov8n | ~12.9 ms | ~77.9 fps | 60 fps | Cực kỳ mượt |
-| yolov8s | ~19.4 ms | ~50.6 fps | 60 fps | Rất mượt |
-| yolov8m | ~26.5 ms | ~36.5 fps | 60 fps | Mượt |
-| yolov8l | ~37.0 ms | ~27.4 fps | 60 fps | Ổn định |
-| yolov8x | ~48.1 ms | ~21.6 fps | 60 fps | Ổn định |
+| yolov8n | ~10.4 ms | ~96.4 fps | 60 fps | Cực kỳ mượt |
+| yolov8s | ~15.2 ms | ~65.9 fps | 60 fps | Cực kỳ mượt |
+| yolov8m | ~21.9 ms | ~45.7 fps | 60 fps | Rất mượt |
+| yolov8l | ~31.3 ms | ~32.0 fps | 60 fps | Mượt |
+| yolov8x | ~40.3 ms | ~24.8 fps | 60 fps | Mượt |
 
 ### 2. WebGPU (Đa nền tảng / GPU chung)
 
 | Model | TOTAL LATENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
 |---|---|---|---|---|
-| yolov8n | ~12.8 ms   | ~78.1 fps | 60 fps | Cực kỳ mượt |
-| yolov8s | ~19.8 ms   | ~42.8 fps | 60 fps | Rất mượt |
-| yolov8m | ~49.1 ms   | ~20.3 fps | 60 fps | Ổn định |
-| yolov8l | ~87.2 ms   | ~11.5 fps | 60 fps | Thấp |
-| yolov8x | ~131.2 ms  | ~7.6 fps | 60 fps | Rất chậm |
+| yolov8n | ~11.8 ms   | ~85.1 fps | 60 fps | Cực kỳ mượt |
+| yolov8s | ~23.2 ms   | ~43.0 fps | 60 fps | Rất mượt |
+| yolov8m | ~48.5 ms   | ~20.6 fps | 60 fps | Ổn định |
+| yolov8l | ~89.4 ms   | ~11.2 fps | 60 fps | Thấp |
+| yolov8x | ~133.6 ms  | ~7.5 fps | 60 fps | Rất chậm |
 
 ### 3. CPU thuần (Không tăng tốc GPU)
 
 | Model | TOTAL LATAENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
 |---|---|---|---|---|
-| yolov8n | ~33.4 ms | ~30.0 fps | 60 fps | Mượt |
-| yolov8s | ~68.6 ms | ~14.6 fps | 60 fps | Thấp |
-| yolov8m | ~139.5 ms | ~7.2 fps | 60 fps | Rất chậm |
-| yolov8l | ~263.2 ms | ~3.8 fps | 60 fps | Lag |
-| yolov8x | ~364.4 ms | ~2.7 fps | 60 fps | Rất lag |
+| yolov8n | ~25.8 ms | ~38.8 fps | 60 fps | Mượt |
+| yolov8s | ~54.8 ms | ~18.3 fps | 60 fps | Thấp |
+| yolov8m | ~119.4 ms | ~8.4 fps | 60 fps | Rất chậm |
+| yolov8l | ~218.8 ms | ~4.6 fps | 60 fps | Lag |
+| yolov8x | ~306.2 ms | ~3.3 fps | 60 fps | Rất lag |
 
 > **Tổng kết**: 
 > * **CoreML** là lựa chọn số 1 trên macOS, mang lại tốc độ và hiệu suất năng lượng tốt nhất.

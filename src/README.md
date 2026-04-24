@@ -8,8 +8,8 @@ Thư mục này chứa toàn bộ mã nguồn **Native Core** của hệ thống
 |---|---|
 | `lib.rs` | Entry point của hệ thống, định nghĩa các PyO3 bindings để Python có thể gọi. |
 | `yolo.rs` | Định nghĩa các kiểu dữ liệu chung (`YoloDetection`, `YoloTask`) và logic nhận diện kiến trúc model. |
-| `v8.rs` | Engine thực thi cho các dòng YOLO truyền thống (v8, v11) - Anchor-based với NMS. |
-| `v26.rs` | Engine thực thi cho dòng YOLO hiện đại (v26, v10) - NMS-Free (không cần hậu xử lý NMS). |
+| `v8/` | Thư mục chứa engine cho YOLOv8, v11. Được tách nhỏ thành base, pose, seg, obb, cls. |
+| `v26/` | Thư mục chứa engine cho YOLOv26, v10 (NMS-Free). Tách nhỏ thành base, pose, seg, cls. |
 | `monitor.rs` | Hệ thống theo dõi hiệu năng native (CPU, GPU, Nhiệt độ, dT/dt). |
 | `ffi.rs` | Cầu nối **Apache Arrow**, cho phép truyền dữ liệu lớn giữa Rust và Python mà không cần copy (Zero-copy). |
 | `image_proc.rs` | Tối ưu hóa xử lý ảnh sử dụng Kornia và SIMD. |

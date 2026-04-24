@@ -1,13 +1,9 @@
-//! Engine YOLOv26 (NMS-Free) Inference Implementation
+//! YOLOv26 Main Detector Implementation
 //!
-//! File này chứa logic thực thi riêng cho YOLOv26 và YOLOv10:
-//! - Load model ONNX NMS-Free
-//! - Preprocessing (Kornia)
-//! - Postprocessing đơn giản (không cần NMS)
-//! - Hỗ trợ Detection, Pose, Segmentation, Classification
-//! - Export kết quả ra định dạng Arrow
+//! Chịu trách nhiệm khởi tạo Session NMS-Free (v26/v10).
 
 use arrow::array::{Array, Float32Array, Int32Array, StructArray};
+
 use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
 use ndarray::Array4;
@@ -24,30 +20,30 @@ use crate::image_proc::draw_rect_native;
 
 #[pyclass]
 pub struct YoloV26Detector {
-    session: Session,
-    input_width: usize,
-    input_height: usize,
-    conf_threshold: f32,
-    task: YoloTask,
-    num_classes: usize,
-    num_keypoints: usize,
-    num_mask_coeffs: usize,
+    pub(crate) session: Session,
+    pub(crate) input_width: usize,
+    pub(crate) input_height: usize,
+    pub(crate) conf_threshold: f32,
+    pub(crate) task: YoloTask,
+    pub(crate) num_classes: usize,
+    pub(crate) num_keypoints: usize,
+    pub(crate) num_mask_coeffs: usize,
     #[pyo3(get)]
     pub is_cls_model: bool,
-    pub last_preprocess_ms: f64,
+    pub(crate) last_preprocess_ms: f64,
     #[pyo3(get)]
     pub last_inference_ms: f64,
     #[pyo3(get)]
     pub last_nms_ms: f64, // decode time
     // Buffer tái sử dụng để tránh cấp phát bộ nhớ liên tục
-    input_tensor_buffer: Array4<f32>,
+    pub(crate) input_tensor_buffer: Array4<f32>,
     #[pyo3(get)]
     pub ep: ExecutionProviderType,
 }
 
-struct YoloResultsV26 {
-    detections: Vec<YoloDetection>,
-    proto: Option<ndarray::ArrayD<f32>>,
+pub(crate) struct YoloResultsV26 {
+    pub(crate) detections: Vec<YoloDetection>,
+    pub(crate) proto: Option<ndarray::ArrayD<f32>>,
 }
 
 #[pymethods]
@@ -354,13 +350,13 @@ impl YoloV26Detector {
 
 impl YoloV26Detector {
     #[inline]
-    fn run_detection_pipeline<'py>(&mut self, py: Python<'py>, numpy_array: &Bound<'py, PyAny>) -> PyResult<(Vec<YoloDetection>, Option<ndarray::ArrayD<f32>>, usize, usize)> {
+    pub(crate) fn run_detection_pipeline<'py>(&mut self, py: Python<'py>, numpy_array: &Bound<'py, PyAny>) -> PyResult<(Vec<YoloDetection>, Option<ndarray::ArrayD<f32>>, usize, usize)> {
         let (width, height) = self.prepare_input(numpy_array)?;
         let results = self.run_inference_internal(py, (width, height))?;
         Ok((results.detections, results.proto, width, height))
     }
 
-    fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize)> {
+    pub(crate) fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize)> {
         let shape: (usize, usize, usize) = numpy_array.getattr("shape")?.extract()?;
         let (height, width, _channels) = shape;
         
@@ -389,15 +385,11 @@ impl YoloV26Detector {
         Ok((width, height))
     }
 
-    fn run_inference_internal(
+    pub(crate) fn run_inference_internal(
         &mut self,
         py: Python,
         orig_dim: (usize, usize),
     ) -> PyResult<YoloResultsV26> {
-        let conf_threshold = self.conf_threshold;
-        let scale_x = orig_dim.0 as f32 / self.input_width as f32;
-        let scale_y = orig_dim.1 as f32 / self.input_height as f32;
-
         let input_tensor = Value::from_array(self.input_tensor_buffer.clone()).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         let t_infer = Instant::now();
         let outputs = py.detach(|| self.session.run(ort::inputs![input_tensor])).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -405,81 +397,40 @@ impl YoloV26Detector {
 
 
         let t_decode = Instant::now();
-        let mut detections = Vec::with_capacity(32);
-
-        if self.task == YoloTask::Classification {
-            // CLS: [1, num_classes]
-            let out_value = outputs.values().next().ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("No output found"))?;
-            let out_extract = out_value.try_extract_tensor::<f32>().map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            detections = Self::decode_cls_v26(out_extract.1, self.num_classes);
-        } else {
-            // YOLOv26 NMS-Free: [1, 300, 6 + Extra]
-            let out_value = outputs.values().next().ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("No output found"))?;
-            let out_extract = out_value.try_extract_tensor::<f32>().map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            let shape = out_extract.0.iter().map(|&d| d as usize).collect::<Vec<_>>();
-            let out_data = ndarray::ArrayViewD::from_shape(shape, out_extract.1).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-            let num_detections = out_data.shape()[1];
-            for i in 0..num_detections {
-                let score = out_data[[0, i, 4]];
-                if score < conf_threshold { continue; }
-
-                let x1 = out_data[[0, i, 0]];
-                let y1 = out_data[[0, i, 1]];
-                let x2 = out_data[[0, i, 2]];
-                let y2 = out_data[[0, i, 3]];
-                let class_id = out_data[[0, i, 5]] as i32;
-
-                let mut keypoints = Vec::new();
-                if self.task == YoloTask::Pose {
-                    for k in 0..self.num_keypoints {
-                        let kx = out_data[[0, i, 6 + k * 3]] * scale_x;
-                        let ky = out_data[[0, i, 7 + k * 3]] * scale_y;
-                        let kconf = out_data[[0, i, 8 + k * 3]];
-                        keypoints.push((kx, ky, kconf));
-                    }
-                }
-
-                let mut mask_coeffs = Vec::new();
-                if self.task == YoloTask::Segmentation {
-                    for m in 0..self.num_mask_coeffs {
-                        mask_coeffs.push(out_data[[0, i, 6 + m]]);
-                    }
-                }
-
-                detections.push(YoloDetection {
-                    class_id, confidence: score,
-                    x: x1 * scale_x, y: y1 * scale_y,
-                    width: (x2 - x1) * scale_x, height: (y2 - y1) * scale_y,
-                    keypoints, mask_coeffs,
-                });
-            }
-        }
-
-        let proto = if self.task == YoloTask::Segmentation {
-            outputs.values().nth(1).and_then(|v| {
-                v.try_extract_tensor::<f32>().ok().map(|ev| {
-                    let p_shape = ev.0.iter().map(|&d| d as usize).collect::<Vec<_>>();
-                    ndarray::ArrayViewD::from_shape(p_shape, ev.1).unwrap().to_owned()
-                })
-            })
-        } else { None };
+        
+        let results = match self.task {
+            YoloTask::Classification => {
+                let out_value = outputs.values().next().ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("No output found"))?;
+                let out_extract = out_value.try_extract_tensor::<f32>().map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+                let detections = Self::decode_cls_v26(out_extract.1, self.num_classes);
+                YoloResultsV26 { detections, proto: None }
+            },
+            YoloTask::Pose => Self::decode_pose_v26(
+                self.conf_threshold,
+                self.input_width,
+                self.input_height,
+                self.num_keypoints,
+                &outputs,
+                orig_dim,
+            )?,
+            YoloTask::Segmentation => Self::decode_seg_v26(
+                self.conf_threshold,
+                self.input_width,
+                self.input_height,
+                self.num_mask_coeffs,
+                &outputs,
+                orig_dim,
+            )?,
+            _ => Self::decode_base_v26(
+                self.conf_threshold,
+                self.input_width,
+                self.input_height,
+                &outputs,
+                orig_dim,
+            )?,
+        };
 
         self.last_nms_ms = t_decode.elapsed().as_secs_f64() * 1000.0;
-        Ok(YoloResultsV26 { detections, proto })
-    }
-
-    fn decode_cls_v26(out_data: &[f32], _num_classes: usize) -> Vec<YoloDetection> {
-        let max_val = out_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let exps: Vec<f32> = out_data.iter().map(|x| (x - max_val).exp()).collect();
-        let sum: f32 = exps.iter().sum();
-        let probs: Vec<f32> = exps.iter().map(|x| x / sum).collect();
-        let mut indexed: Vec<(usize, f32)> = probs.iter().enumerate().map(|(i, &p)| (i, p)).collect();
-        indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        indexed.into_iter().take(5).map(|(idx, prob)| YoloDetection {
-            class_id: idx as i32, confidence: prob,
-            x: 0.0, y: 0.0, width: 0.0, height: 0.0,
-            keypoints: vec![], mask_coeffs: vec![],
-        }).collect()
+        Ok(results)
     }
 }

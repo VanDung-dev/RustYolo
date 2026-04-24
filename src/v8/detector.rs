@@ -1,15 +1,12 @@
-//! Engine YOLOv8 Inference Implementation
+//! YOLOv8 Main Detector Implementation
 //!
-//! File này chứa logic thực thi riêng cho YOLOv8, bao gồm:
-//! - Load model ONNX cho YOLOv8/v11
-//! - Preprocessing (Kornia)
-//! - Postprocessing & NMS cho YOLOv8
-//! - Export kết quả ra định dạng Arrow
+//! Chịu trách nhiệm khởi tạo Session và điều phối luồng inference.
 
 use arrow::array::{Array, Float32Array, Int32Array, StructArray};
+
 use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
-use ndarray::{Array4, Axis, s};
+use ndarray::{Array4};
 use ort::ep::{CoreML, ExecutionProvider};
 use ort::session::Session;
 use ort::value::Value;
@@ -23,25 +20,25 @@ use crate::image_proc::draw_rect_native;
 
 #[pyclass]
 pub struct YoloV8Detector {
-    session: Session,
-    input_width: usize,
-    input_height: usize,
-    conf_threshold: f32,
-    iou_threshold: f32,
-    num_classes: usize,
-    num_keypoints: usize,
-    num_mask_coeffs: usize,
+    pub(crate) session: Session,
+    pub(crate) input_width: usize,
+    pub(crate) input_height: usize,
+    pub(crate) conf_threshold: f32,
+    pub(crate) iou_threshold: f32,
+    pub(crate) num_classes: usize,
+    pub(crate) num_keypoints: usize,
+    pub(crate) num_mask_coeffs: usize,
     #[pyo3(get)]
     pub is_cls_model: bool,
     #[pyo3(get)]
     pub is_obb_model: bool,
-    pub last_preprocess_ms: f64,
+    pub(crate) last_preprocess_ms: f64,
     #[pyo3(get)]
     pub last_inference_ms: f64,
     #[pyo3(get)]
     pub last_nms_ms: f64,
     // Buffer tái sử dụng để tránh cấp phát bộ nhớ liên tục (640*640*3*4 bytes)
-    input_tensor_buffer: Array4<f32>,
+    pub(crate) input_tensor_buffer: Array4<f32>,
     #[pyo3(get)]
     pub ep: ExecutionProviderType,
 }
@@ -359,9 +356,8 @@ impl YoloV8Detector {
 }
 
 impl YoloV8Detector {
-    // Helper functions to eliminate code duplication
     #[inline]
-    fn build_default_arrow_fields() -> Vec<Field> {
+    pub(crate) fn build_default_arrow_fields() -> Vec<Field> {
         vec![
             Field::new("class_id", DataType::Int32, false),
             Field::new("confidence", DataType::Float32, false),
@@ -373,7 +369,7 @@ impl YoloV8Detector {
     }
 
     #[inline]
-    fn build_default_arrow_arrays(class_ids: Int32Array, confidences: Float32Array, boxes_x: Float32Array, boxes_y: Float32Array, boxes_w: Float32Array, boxes_h: Float32Array) -> Vec<Arc<dyn Array>> {
+    pub(crate) fn build_default_arrow_arrays(class_ids: Int32Array, confidences: Float32Array, boxes_x: Float32Array, boxes_y: Float32Array, boxes_w: Float32Array, boxes_h: Float32Array) -> Vec<Arc<dyn Array>> {
         vec![
             Arc::new(class_ids),
             Arc::new(confidences),
@@ -385,7 +381,7 @@ impl YoloV8Detector {
     }
 
     #[inline]
-    fn build_list_array<F, T>(detections: &[YoloDetection], mut extractor: F) -> Arc<dyn Array>
+    pub(crate) fn build_list_array<F, T>(detections: &[YoloDetection], mut extractor: F) -> Arc<dyn Array>
     where
         F: FnMut(&YoloDetection) -> &[T],
         T: Into<f32> + Copy,
@@ -401,7 +397,7 @@ impl YoloV8Detector {
     }
 
     #[inline]
-    fn create_empty_detection(class_id: i32, confidence: f32) -> YoloDetection {
+    pub(crate) fn create_empty_detection(class_id: i32, confidence: f32) -> YoloDetection {
         YoloDetection {
             class_id,
             confidence,
@@ -415,14 +411,14 @@ impl YoloV8Detector {
     }
 
     #[inline]
-    fn run_detection_pipeline<'py>(&mut self, py: Python<'py>, numpy_array: &Bound<'py, PyAny>) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>, usize, usize)> {
+    pub(crate) fn run_detection_pipeline<'py>(&mut self, py: Python<'py>, numpy_array: &Bound<'py, PyAny>) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>, usize, usize)> {
         let (width, height) = self.prepare_input(numpy_array)?;
         let (detections, proto_flat) = self.run_inference_internal(py, (width, height))?;
         Ok((detections, proto_flat, width, height))
     }
 
     #[inline]
-    fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize)> {
+    pub(crate) fn prepare_input(&mut self, numpy_array: &Bound<'_, PyAny>) -> PyResult<(usize, usize)> {
         let shape_obj = numpy_array.getattr("shape")?;
         let shape: (usize, usize, usize) = shape_obj.extract()?;
         let (height, width, _channels) = shape;
@@ -463,21 +459,11 @@ impl YoloV8Detector {
         Ok((width, height))
     }
 
-    fn run_inference_internal(
+    pub(crate) fn run_inference_internal(
         &mut self,
         py: Python,
         orig_dim: (usize, usize),
     ) -> PyResult<(Vec<YoloDetection>, Option<Vec<f32>>)> {
-        let is_cls = self.is_cls_model;
-        let num_classes = self.num_classes;
-        let num_keypoints = self.num_keypoints;
-        let num_mask_coeffs = self.num_mask_coeffs;
-        let is_obb = self.is_obb_model;
-        let iou_threshold = self.iou_threshold;
-        let conf_threshold = self.conf_threshold;
-        let input_width_f = self.input_width as f32;
-        let input_height_f = self.input_height as f32;
-
         // Create tensor from pre-allocated buffer (Cloned for ORT ownership)
         let input_tensor = Value::from_array(self.input_tensor_buffer.clone()).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -507,9 +493,8 @@ impl YoloV8Detector {
         let out_data = ndarray::ArrayViewD::from_shape(shape_usize, out_extract.1).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("ArrayView error: {}", e))
         })?;
-        let out_shape = out_data.shape();
 
-        let proto_flat: Option<Vec<f32>> = if num_mask_coeffs > 0 {
+        let proto_flat: Option<Vec<f32>> = if self.num_mask_coeffs > 0 {
             match outputs.get("output1") {
                 Some(v) => {
                     let t = v.try_extract_tensor::<f32>().map_err(|e| {
@@ -527,136 +512,63 @@ impl YoloV8Detector {
             None
         };
 
-        if is_cls {
-            let cls_results = Self::decode_cls_output(out_extract.1, num_classes);
+        if self.is_cls_model {
+            let cls_results = Self::decode_cls_v8(out_extract.1, self.num_classes);
             return Ok((cls_results, proto_flat));
         }
 
-        let num_anchors = out_shape[2];
-        let scale_x = orig_dim.0 as f32 / input_width_f;
-        let scale_y = orig_dim.1 as f32 / input_height_f;
-
         let t_nms = Instant::now();
+        
+        let detections = if self.is_obb_model {
+            Self::decode_obb_v8(
+                self.conf_threshold,
+                self.iou_threshold,
+                self.num_classes,
+                self.input_width,
+                self.input_height,
+                &out_data,
+                orig_dim,
+            )
+        } else if self.num_keypoints > 0 {
+            Self::decode_pose_v8(
+                self.conf_threshold,
+                self.iou_threshold,
+                self.num_classes,
+                self.num_keypoints,
+                self.input_width,
+                self.input_height,
+                &out_data,
+                orig_dim,
+            )
+        } else if self.num_mask_coeffs > 0 {
+            Self::decode_seg_v8(
+                self.conf_threshold,
+                self.iou_threshold,
+                self.num_classes,
+                self.num_mask_coeffs,
+                self.input_width,
+                self.input_height,
+                &out_data,
+                orig_dim,
+            )
+        } else {
+            Self::decode_base_v8(
+                self.conf_threshold,
+                self.iou_threshold,
+                self.num_classes,
+                self.input_width,
+                self.input_height,
+                &out_data,
+                orig_dim,
+            )
+        }?;
 
-        // Tối ưu layout: (1, 84, 8400) -> (84, 8400) -> (8400, 84)
-        let out_data_2d = out_data.index_axis(Axis(0), 0).reversed_axes();
-        let out_data_2d = out_data_2d.into_dimensionality::<ndarray::Ix2>().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Dimensionality error: {}", e))
-        })?;
-
-        let mut all_boxes: Vec<_> = Vec::with_capacity(128);
-        for i in 0..num_anchors {
-            let row = out_data_2d.row(i);
-            let scores = row.slice(s![4..4 + num_classes]);
-
-            // Vectorized confidence extraction (Fast Path)
-            let mut max_conf = 0.0f32;
-            let mut max_class = 0_usize;
-            
-            for (c, &conf) in scores.iter().enumerate() {
-                if conf > max_conf {
-                    max_conf = conf;
-                    max_class = c;
-                }
-            }
-
-            if max_conf <= conf_threshold {
-                continue;
-            }
-
-            let cx = row[0];
-            let cy = row[1];
-            let w = row[2];
-            let h = row[3];
-
-            let mut keypoints = Vec::with_capacity(num_keypoints);
-            let (final_x, final_y, final_w, final_h): (f32, f32, f32, f32) = if is_obb {
-                let angle = row[4 + num_classes];
-                let cos_a = angle.cos();
-                let sin_a = angle.sin();
-                let dx = w / 2.0 * cos_a;
-                let dy = w / 2.0 * sin_a;
-                let ex = -h / 2.0 * sin_a;
-                let ey = h / 2.0 * cos_a;
-
-                let pts = [
-                    (cx - dx - ex, cy - dy - ey),
-                    (cx + dx - ex, cy + dy - ey),
-                    (cx + dx + ex, cy + dy + ey),
-                    (cx - dx + ex, cy - dy + ey),
-                ];
-
-                for pt in &pts {
-                    keypoints.push((pt.0 * scale_x, pt.1 * scale_y, 1.0));
-                }
-
-                let min_x = pts.iter().map(|p| p.0).fold(f32::INFINITY, f32::min);
-                let min_y = pts.iter().map(|p| p.1).fold(f32::INFINITY, f32::min);
-                let max_x = pts.iter().map(|p| p.0).fold(f32::NEG_INFINITY, f32::max);
-                let max_y = pts.iter().map(|p| p.1).fold(f32::NEG_INFINITY, f32::max);
-
-                (min_x * scale_x, min_y * scale_y, (max_x - min_x) * scale_x, (max_y - min_y) * scale_y)
-            } else {
-                ((cx - w / 2.0) * scale_x, (cy - h / 2.0) * scale_y, w * scale_x, h * scale_y)
-            };
-
-            let x = final_x.clamp(0.0, orig_dim.0 as f32);
-            let y = final_y.clamp(0.0, orig_dim.1 as f32);
-            let bbw = final_w.clamp(0.0, orig_dim.0 as f32);
-            let bbh = final_h.clamp(0.0, orig_dim.1 as f32);
-
-            if num_keypoints > 0 {
-                let base_offset = 4 + num_classes;
-                for kp_idx in 0..num_keypoints {
-                    let kx = row[base_offset + kp_idx * 3] * scale_x;
-                    let ky = row[base_offset + kp_idx * 3 + 1] * scale_y;
-                    let kconf = row[base_offset + kp_idx * 3 + 2];
-                    keypoints.push((kx, ky, kconf));
-                }
-            }
-
-            let mut mask_coeffs = Vec::with_capacity(num_mask_coeffs);
-            if num_mask_coeffs > 0 {
-                let mc_base = 4 + num_classes;
-                for m in 0..num_mask_coeffs {
-                    mask_coeffs.push(row[mc_base + m]);
-                }
-            }
-
-            all_boxes.push((x, y, bbw, bbh, max_conf, max_class, keypoints, mask_coeffs));
-        }
-
-        all_boxes.sort_unstable_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
-        let mut keep = vec![true; all_boxes.len()];
-        let mut detections = Vec::with_capacity(all_boxes.len());
-
-        for i in 0..all_boxes.len() {
-            if !keep[i] { continue; }
-            let (x, y, w, h, conf, class_id, ref kps, ref mcs) = all_boxes[i];
-            detections.push(YoloDetection {
-                class_id: class_id as i32,
-                confidence: conf,
-                x, y, width: w, height: h,
-                keypoints: kps.clone(),
-                mask_coeffs: mcs.clone(),
-            });
-
-            for j in (i + 1)..all_boxes.len() {
-                if !keep[j] || all_boxes[j].5 != class_id { continue; }
-                if Self::compute_iou_internal(&all_boxes[i], &all_boxes[j]) > iou_threshold {
-                    keep[j] = false;
-                }
-            }
-        }
-
-        drop(out_data);
-        drop(outputs);
         self.last_nms_ms = t_nms.elapsed().as_secs_f64() * 1000.0;
 
         Ok((detections, proto_flat))
     }
 
-    fn compute_iou_internal(
+    pub(crate) fn compute_iou_internal(
         box1: &(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>),
         box2: &(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>),
     ) -> f32 {
@@ -671,21 +583,5 @@ impl YoloV8Detector {
         let union = area1 + area2 - intersection;
 
         if union == 0.0 { 0.0 } else { intersection / union }
-    }
-
-    fn decode_cls_output(out_data: &[f32], _num_classes: usize) -> Vec<YoloDetection> {
-        let max_val = out_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let exps: Vec<f32> = out_data.iter().map(|x| (x - max_val).exp()).collect();
-        let sum: f32 = exps.iter().sum();
-        let probs: Vec<f32> = exps.iter().map(|x| x / sum).collect();
-
-        let mut indexed: Vec<(usize, f32)> = probs.iter().enumerate().map(|(i, &p)| (i, p)).collect();
-        indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-        indexed
-            .into_iter()
-            .take(5)
-            .map(|(idx, prob)| Self::create_empty_detection(idx as i32, prob))
-            .collect()
     }
 }
