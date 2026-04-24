@@ -135,10 +135,7 @@ stateDiagram-v2
 
     ```bash
     # Cài đặt với PIP
-    pip install -e .
-    
-    # Cài đặt với UV (Khuyên dùng)
-    uv sync
+    pip install -r requirements.txt
     ```
 
 4. Cài đặt Rust (Biên dịch Engine)
