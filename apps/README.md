@@ -15,6 +15,8 @@ Thư mục này chứa toàn bộ mã nguồn **Python Application** chịu trá
 | `detector.py` | Wrapper chính cho Rust Engine, quản lý việc load model, nạp DLL cho Windows (Python 3.12+), và chạy inference. |
 | `ui_panel.py` | Thiết kế giao diện Dashboard theo dõi FPS, Latency, Load GPU/CPU và Thermal Gradient. |
 | `videostream.py` | Luồng đọc Camera tốc độ cao, sử dụng Buffer riêng để không làm nghẽn luồng xử lý AI. |
+| `worker.py` | Luồng xử lý AI nền (AI Worker) với Adaptive Thermal Control cho Apple Silicon. |
+| `camera_app.py` | Chứa logic chính cho camera detection và phát hiện độ phân giải màn hình theo platform. |
 | `performance_monitor.py` | Cầu nối nhận dữ liệu đo đạc thực tế từ Rust để đẩy lên UI Dashboard. |
 
 ## 🛠 Cơ chế hoạt động
