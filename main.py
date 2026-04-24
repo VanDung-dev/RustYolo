@@ -38,18 +38,33 @@ logger = logging.getLogger(__name__)
 
 
 class VideoStream:
-    """Threaded video capture stream to handle I/O without blocking"""
+    """Threaded video capture stream to handle I/O without blocking
+    
+    Args:
+        src: Camera ID (int) hoặc URL stream (str) như 'rtsp://', 'http://', 'tcp://'
+        width: Độ phân giải rộng (chỉ áp dụng cho camera local)
+        height: Độ phân giải cao (chỉ áp dụng cho camera local)
+        fps: FPS mục tiêu (chỉ áp dụng cho camera local)
+    """
     def __init__(self, src=0, width=1920, height=1080, fps=60):
-        self.stream = cv2.VideoCapture(src)
+        # Xác định nếu src là URL string hay camera ID integer
+        self.is_url = isinstance(src, str)
         
-        # Cấu hình camera độ phân giải cao và fps từ config
-        self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self.stream.set(cv2.CAP_PROP_FPS, fps)
-        self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        self.stream.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-        self.stream.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+        # Nếu là URL, không áp dụng các cấu hình camera (không có ý nghĩa với stream)
+        if self.is_url:
+            self.stream = cv2.VideoCapture(src)
+            logger.info(f"Đang kết nối đến stream URL: {src}")
+        else:
+            self.stream = cv2.VideoCapture(src)
+            
+            # Cấu hình camera độ phân giải cao và fps từ config
+            self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.stream.set(cv2.CAP_PROP_FPS, fps)
+            self.stream.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            self.stream.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+            self.stream.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
 
         self.frame_queue = queue.Queue(maxsize=2)
         self.stopped = False
@@ -134,7 +149,7 @@ def ai_worker_thread(detector, frame_queue, result_queue, monitor, stop_event):
 
 def run_camera_detection(
     model_name: str,
-    camera_id: int = DEFAULT_CAMERA_ID,
+    camera_id: str = str(DEFAULT_CAMERA_ID),  # Hỗ trợ cả integer ID và URL string
     confidence_threshold: float = DEFAULT_CONFIDENCE,
     execution_provider: str = "coreml",
 ):
@@ -148,13 +163,32 @@ def run_camera_detection(
     detector = YoloDetector(model_name, confidence_threshold, ep=execution_provider)
     logger.info("Model đã được load thành công!")
 
+    # Xác định source: nếu camera_id là string số (ví dụ "0") thì chuyển thành int
+    # Nếu là URL (chứa "://") thì giữ nguyên string
+    if isinstance(camera_id, str) and "://" not in camera_id:
+        try:
+            src = int(camera_id)
+        except ValueError:
+            logger.error(f"Giá trị --camera không hợp lệ: {camera_id}")
+            logger.error("Sử dụng: --camera 0 (camera local) hoặc --camera rtsp://... (stream URL)")
+            sys.exit(1)
+    else:
+        src = camera_id  # URL string hoặc int
+    
     # Khởi động luồng Camera siêu tốc
-    stream = VideoStream(src=camera_id, width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS).start()
+    stream = VideoStream(src=src, width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS).start()
     time.sleep(1.0) # Đợi camera warm up
 
     ret, first_frame = stream.read()
     if not ret or first_frame is None:
-        logger.error(f"Không thể mở camera với ID {camera_id}")
+        if stream.is_url:
+            logger.error(f"Không thể kết nối đến stream URL: {camera_id}")
+            logger.error("Vui lòng kiểm tra:")
+            logger.error("  1. Địa chỉ IP và port đúng")
+            logger.error("  2. Server stream đang chạy (ffplay, GStreamer, v.v.)")
+            logger.error("  3. Firewall/network cho phép kết nối")
+        else:
+            logger.error(f"Không thể mở camera với ID {camera_id}")
         sys.exit(1)
 
     # 0. Xác định độ phân giải màn hình để scale UI hợp lý
@@ -295,8 +329,8 @@ def main():
         help="Đường dẫn đến file model YOLOv8 (ví dụ: yolov8n.onnx)"
     )
     parser.add_argument(
-        "--camera", type=int, default=DEFAULT_CAMERA_ID, 
-        help="ID của camera (mặc định 0)"
+        "--camera", type=str, default=str(DEFAULT_CAMERA_ID), 
+        help="ID của camera (ví dụ: 0, 1) hoặc URL stream (ví dụ: rtsp://..., http://..., tcp://...)"
     )
     parser.add_argument(
         "--conf", type=float, default=DEFAULT_CONFIDENCE, 
