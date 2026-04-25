@@ -10,6 +10,7 @@
 
 use pyo3::prelude::*;
 
+mod face;
 mod ffi;
 pub mod image_proc;
 mod monitor;
@@ -36,6 +37,8 @@ fn rust_yolo(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<yolo::YoloArchitecture>()?;
     m.add_class::<yolo::YoloTask>()?;
     m.add_class::<yolo::ExecutionProviderType>()?;
+    m.add_class::<face::ffi::FaceToolbox>()?;
+    m.add_class::<face::ffi::FaceToolbox>()?;
 
     Ok(())
 }
