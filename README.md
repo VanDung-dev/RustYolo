@@ -1,6 +1,6 @@
-# Rust YOLO Edge AI — High-Performance Inference Engine
+# Rust YOLO & Face ID Attendance System — Edge AI Engine
 
-Tối ưu mô hình YOLO hiệu suất cao, đa nền tảng với kiến trúc lai **Rust + Python**. Dự án hỗ trợ tối đa tăng tốc phần cứng thông qua **CoreML** (cho Apple Silicon) và chính thức hỗ trợ **WebGPU** cho Windows, Linux và Mac.
+Tối ưu mô hình YOLO hiệu suất cao và hệ thống điểm danh Face ID đa nền tảng với kiến trúc lai **Rust + Python**. Dự án hỗ trợ tăng tốc phần cứng tối đa thông qua **CoreML** (Apple Silicon) và **WebGPU** (Windows, Linux, Mac), kết hợp với cơ chế truyền dữ liệu **Zero-copy** giúp đạt hiệu năng tốt nhất.
 
 ---
 
@@ -8,12 +8,12 @@ Tối ưu mô hình YOLO hiệu suất cao, đa nền tảng với kiến trúc 
 
 | Đặc tính | Giá trị                                               |
 |---|-------------------------------------------------------|
-| Kiến trúc | Hybrid Rust + Python (Phối hợp hiệu năng & linh hoạt) |
+| Kiến trúc | Hybrid Rust + Python (Hiệu năng Rust + Linh hoạt Python) |
 | Inference Engine | ONNX Runtime + CoreML / WebGPU (Vulkan, DX, Metal)    |
+| Face ID | SCRFD (Detection) + ArcFace (Embedding) + SQLite      |
 | Data Transfer | Apache Arrow C Data Interface **Zero Copy**           |
 | Đa luồng | Rayon data parallelism (NMS & Preprocess)             |
-| Xử lý ảnh | Kornia CPU optimized (SIMD acceleration)              |
-| Monitoring | Native System Telemetry (CPU, GPU, Thermal)           |
+| Thermal Control | Adaptive Thermal Scheduling (Tự động điều tiết FPS)  |
 | Latency yolov8n | ~10.4ms (CoreML), ~11.8ms (WebGPU) trên M4 Pro            |
 
 ---
@@ -21,26 +21,20 @@ Tối ưu mô hình YOLO hiệu suất cao, đa nền tảng với kiến trúc 
 ## 📂 Cấu trúc dự án
 
 ```
-rust_yolo/
-├── src/                    # Rust native extension
-│   ├── lib.rs              # PyO3 module binding
-│   ├── yolo.rs             # YOLOv8 inference + NMS engine
-│   ├── monitor.rs          # System performance monitor
-│   ├── ffi.rs              # Apache Arrow C Data bridge
-│   └── image_proc.rs       # Kornia preprocessing pipeline
-├── apps/                   # Python application layer
-│   ├── detector.py         # Python wrapper + annotation
-│   ├── performance_monitor.py
-│   ├── ui_panel.py         # OpenCV stats UI render
-│   └── config.py
-├── main.py                 # Entry point camera demo
-├── Cargo.toml
-└── requirements.txt
+RustYolo/
+├── src/                    # Core Engine (Rust Native)
+├── apps/                   # Application Layer (Python)
+├── attendance_system/      # Face ID Solution
+├── main.py                 # Entry point YOLO Detection
+├── Cargo.toml              # Rust configuration
+└── requirements.txt        # Python dependencies
 ```
 
 ---
 
-### 📐 Luồng xử lý từng frame
+### 📐 1. Luồng xử lý Engine YOLO (Core Engine)
+
+Đây là luồng xử lý cơ bản cho việc phát hiện vật thể, tối ưu cho tốc độ và truyền dữ liệu không sao chép (Zero-copy).
 
 ```mermaid
 sequenceDiagram
@@ -79,22 +73,36 @@ sequenceDiagram
 
 ---
 
-## 🌡️ Cơ chế Thermal Aware Scheduling
+### 🛡️ 2. Luồng bảo mật Face ID (Attendance Workflow)
 
-Đây là tính năng cốt lõi của đề tài nghiên cứu:
+Tích hợp thêm bộ lọc an toàn (Safety Filter) để chống giả mạo trước khi tiến hành nhận diện khuôn mặt.
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Normal
-    Normal --> Warning: Nhiệt độ > 85°C
-    Warning --> Throttling: Nhiệt độ > 92°C
-    Throttling --> Warning: Nhiệt độ giảm < 90°C
-    Warning --> Normal: Nhiệt độ giảm < 82°C
-
-    Normal: ✅ Chạy tối đa tốc độ\nKhông có delay
-    Warning: ⚠️ Thêm 5ms delay mỗi frame\nGiảm tải chủ động
-    Throttling: 🔴 Thêm 20ms delay mỗi frame\nBảo vệ phần cứng
+graph TD
+    A[📷 Frame Input] --> B{🔍 YOLOv8 Filter}
+    B -- Phát hiện Điện thoại --> C[🛑 Cảnh báo Gian lận]
+    B -- Chỉ phát hiện Người --> D[👤 Face Detection - SCRFD]
+    D --> E[🦀 Rust Face Align]
+    E --> F[✨ ArcFace Embedding]
+    F --> G[🗄️ Vector Match - NumPy]
+    G -- Thành công --> H[✅ Log SQLite Attendance]
+    G -- Thất bại --> I[❓ Người lạ]
 ```
+
+* **YOLO Filter**: Lớp bảo vệ đầu tiên, chỉ cho phép nhận diện khi có người thực và không có thiết bị điện tử.
+* **Batch Processing**: Rust Engine xử lý căn chỉnh khuôn mặt đồng thời để tối ưu hiệu năng.
+* **Vector Search**: So khớp 512-dim embedding cực nhanh bằng thư viện NumPy.
+
+---
+
+## 🆔 Hệ thống điểm danh Face ID (Attendance System)
+
+Điểm danh thông minh tích hợp sẵn trong thư mục `attendance_system/` với các tính năng bảo mật cao:
+
+* **Chống giả mạo (Anti-Spoofing)**: Sử dụng YOLOv8x để phát hiện thiết bị điện tử (điện thoại, máy tính bảng) trong khung hình, ngăn chặn việc dùng ảnh/video để điểm danh giả.
+* **Đăng ký 8 góc độ**: Quy trình đăng ký nhân viên thu thập khuôn mặt từ 8 hướng khác nhau (ngước, cúi, trái, phải...) để đảm bảo AI nhận diện chính xác nhất.
+* **Zero-copy Inference**: Toàn bộ dữ liệu ảnh được truyền thẳng vào Rust Engine thông qua Apache Arrow, đảm bảo độ trễ cực thấp ngay cả khi xử lý nhiều khuôn mặt cùng lúc.
+* **Quản lý SQLite**: Lưu trữ thông tin nhân viên và log điểm danh nội bộ, dễ dàng tích hợp với các hệ thống quản trị nhân sự hiện có.
 
 ---
 
@@ -102,16 +110,16 @@ stateDiagram-v2
 
 ### 1. Yêu cầu hệ thống
 
-*   **Hệ điều hành**:
+* **Hệ điều hành**:
 
-    *   **macOS**: 13.0+ (Khuyến nghị Apple Silicon ARM64).
-    *   **Windows**: Windows 10/11 (64-bit).
-    *   **Linux**: Ubuntu 22.04 LTS trở lên.
+  * **macOS**: 13.0+ (Khuyến nghị Apple Silicon ARM64).
+  * **Windows**: Windows 10/11 (64-bit).
+  * **Linux**: Ubuntu 22.04 LTS trở lên.
 
-*   **Môi trường lập trình**:
+* **Môi trường lập trình**:
 
-    *   **Python**: 3.12+ (Hỗ trợ tốt nhất cho Windows DLL loading).
-    *   **Rust**: 1.94+ (Edition 2024).
+  * **Python**: 3.12+ (Hỗ trợ tốt nhất cho Windows DLL loading).
+  * **Rust**: 1.94+ (Edition 2024).
 
 ### 2. Cài đặt dependencies
 
@@ -147,17 +155,13 @@ stateDiagram-v2
 
 Dự án hỗ trợ 3 kiểu build tối ưu cho từng nền tảng phần cứng khác nhau:
 
-*   **Tối ưu cho Mac (M1/M2/M3/M4/M5)**
+```bash
+# Tối ưu cho Mac (M1/M2/M3/M4/M5)
+maturin develop --release
 
-    ```bash
-    maturin develop --release
-    ```
-
-*   **Đa nền tảng (Vulkan/Metal/DirectX) qua WebGPU**
-
-    ```bash
-    maturin develop --release --features webgpu
-    ```
+# Đa nền tảng (Vulkan/Metal/DirectX) qua WebGPU
+maturin develop --release --features webgpu
+```
 
 ### 4. Tải mô hình Yolo và chuyển đổi thành ONNX
 
@@ -165,55 +169,53 @@ Dự án hỗ trợ 3 kiểu build tối ưu cho từng nền tảng phần cứ
 python export_onnx_for_rust.py # yolov8n
 ```
 
-### 5. Chạy demo
+### 5. Chạy các ứng dụng Demo
 
-Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep` (Execution Provider) tương ứng:
+Dự án cung cấp nhiều demo khác nhau tùy theo mục đích sử dụng:
 
-*   **Chạy với CoreML (MacOS):**
+* **Demo Phát hiện vật thể (YOLOv8):**
 
     ```bash
     python main.py --model yolov8n.onnx --ep coreml
     ```
 
-*   **Chạy với WebGPU (GPU đa nền tảng):**
+*   **Demo Điểm danh Face ID (Đơn giản):**
 
     ```bash
-    python main.py --model yolov8n.onnx --ep webgpu
+    python attendance_system/demo.py
     ```
 
-*   **Chạy thuần CPU (Dùng cho máy không có GPU):**
+*   **Ứng dụng Điểm danh bảo mật (Có Anti-Spoofing):**
 
     ```bash
-    python main.py --model yolov8n.onnx --ep cpu
+    python attendance_system/check_in.py
     ```
+
+*   **Đăng ký nhân viên mới:**
+
+    ```bash
+    python attendance_system/register_user.py
+    ```
+
+---
 
 ### 6. Sử dụng Camera từ Network Stream
 
 Ứng dụng hỗ trợ kết nối camera từ xa qua các giao thức stream:
 
-*   **RTSP Stream:**
+```bash
+# RTSP Stream:
+python main.py --model yolov8n.onnx --camera "rtsp://192.168.x.x:8888/stream"
 
-    ```bash
-    python main.py --model yolov8n.onnx --camera "rtsp://192.168.x.x:8888/stream"
-    ```
+# TTP Stream
+python main.py --model yolov8n.onnx --camera "http://192.168.x.x:8888/video"
 
-*   **HTTP Stream:**
+# TCP Stream (FFmpeg)
+python main.py --model yolov8n.onnx --camera "tcp://192.168.x.x:8888"
 
-    ```bash
-    python main.py --model yolov8n.onnx --camera "http://192.168.x.x:8888/video"
-    ```
-
-*   **TCP Stream (FFmpeg):**
-
-    ```bash
-    python main.py --model yolov8n.onnx --camera "tcp://192.168.x.x:8888"
-    ```
-
-*   **Camera local (mặc định):**
-
-    ```bash
-    python main.py --model yolov8n.onnx
-    ```
+# Camera local (mặc định)
+python main.py --model yolov8n.onnx
+```
 
 > **Lưu ý:**
 > - Đối với stream URL, ứng dụng sẽ không áp dụng các cấu hình độ phân giải và FPS (phụ thuộc vào server stream).
@@ -277,20 +279,9 @@ Sau khi build thành công kiểu nào, bạn cần chạy với tham số `--ep
 
 ---
 
-## 🔧 Tính năng
+## 📜 Credits
 
-* Realtime object detection 80 classes COCO
-* Full system monitoring: CPU, GPU, Memory, Thermal
-* Thermal gradient dT/dt realtime measurement
-* Full latency breakdown per stage
-* Hardware accelerated CoreML (Apple Neural Engine / GPU)
-* Native WebGPU support (Vulkan, Metal, DirectX 12)
-* Zero copy data transfer (Apache Arrow)
-* Thread safe background monitoring
-* Hỗ trợ toàn bộ dòng YOLO như v8, v11, v26
-* Adaptive Thermal Scheduling tự động điều tiết tải
-* Non-blocking UI luôn mượt 60fps
-* Tự động tối ưu hóa giao diện cho màn hình Retina/High-DPI (macOS)
+Module `src/face` được phát triển dựa trên mã nguồn gốc từ dự án [face_id-rs](https://github.com/RuurdBijlsma/face_id-rs) của [RuurdBijlsma](https://github.com/RuurdBijlsma).
 
 ---
 
