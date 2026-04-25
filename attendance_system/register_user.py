@@ -20,10 +20,7 @@ logger = logging.getLogger(__name__)
 # Cấu trúc dữ liệu tạm cho phát hiện khuôn mặt
 FaceDetection = namedtuple("FaceDetection", ["bbox", "score", "landmarks"])
 
-# Cấu hình model đồng bộ từ config
-PERSON_MODEL = config.YOLO_MODEL_PATH
-FACE_MODEL = config.FACE_DETECTOR_PATH
-ARCFACE_MODEL = config.FACE_EMBEDDER_PATH
+# --- KHÔNG SỬ DỤNG BIẾN ALIAS TẠI ĐÂY - SỬ DỤNG TRỰC TIẾP config.X ---
 
 def main():
     """
@@ -34,7 +31,7 @@ def main():
     db_path = config.DB_PATH
     
     # Kiểm tra tài nguyên mô hình
-    for m in [PERSON_MODEL, FACE_MODEL, ARCFACE_MODEL]:
+    for m in [config.YOLO_MODEL_PATH, config.FACE_DETECTOR_PATH, config.FACE_EMBEDDER_PATH]:
         if not os.path.exists(m):
             logger.error(f"  [LỖI] Không tìm thấy tệp tin model tại: {m}")
             return
@@ -42,10 +39,10 @@ def main():
     logger.info("Đang khởi tạo hệ thống đăng ký...")
     try:
         # Khởi tạo phát hiện người (YOLOv8x) để kiểm tra an toàn
-        person_detector = rust_yolo.YoloV8Detector(PERSON_MODEL, config.YOLO_CONF_THRESHOLD, config.YOLO_IOU_THRESHOLD, config.DEFAULT_EP)
+        person_detector = rust_yolo.YoloV8Detector(config.YOLO_MODEL_PATH, config.YOLO_CONF_THRESHOLD, config.YOLO_IOU_THRESHOLD, config.DEFAULT_EP)
         
         # Khởi tạo Face System (SCRFD + ArcFace)
-        core = AttendanceCore(FACE_MODEL, ARCFACE_MODEL, db_path, execution_provider=config.DEFAULT_EP)
+        core = AttendanceCore(config.FACE_DETECTOR_PATH, config.FACE_EMBEDDER_PATH, db_path, execution_provider=config.DEFAULT_EP)
         logger.info("Hệ thống đã sẵn sàng.")
     except Exception as e:
         logger.error(f"  [LỖI KHỞI TẠO] {e}")
@@ -62,11 +59,7 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
     
-    # Cấu hình tỉ lệ 3:4 cho khung hình chân dung (Portrait-like) từ config
-    CROP_W = config.REG_CROP_W
-    CROP_H = config.REG_CROP_H
-    
-    # Danh sách 8 tư thế cần thu thập
+    # Danh sách 7 tư thế cần thu thập (Loại bỏ cúi xuống)
     steps = [
         {"label": "NHÌN THẲNG", "desc": "Giữ mặt thẳng vào ô vuông trung tâm", "close_up": False},
         {"label": "NHÌN THẲNG - GẦN", "desc": "Đưa mặt lại gần ô vuông lớn", "close_up": True},
@@ -74,8 +67,7 @@ def main():
         {"label": "QUAY TRÁI 90°", "desc": "Quay mặt sang trái hoàn toàn", "close_up": False},
         {"label": "QUAY PHẢI 45°", "desc": "Quay mặt sang phải một chút", "close_up": False},
         {"label": "QUAY PHẢI 90°", "desc": "Quay mặt sang phải hoàn toàn", "close_up": False},
-        {"label": "NGƯỚC LÊN 45°", "desc": "Ngước mặt lên trên một chút", "close_up": False},
-        {"label": "CÚI XUỐNG 45°", "desc": "Cúi mặt xuống dưới một chút", "close_up": False}
+        {"label": "NGƯỚC LÊN 45°", "desc": "Ngước mặt lên trên một chút", "close_up": False}
     ]
     
     collected_embeddings = []
@@ -90,17 +82,20 @@ def main():
         frame = cv2.flip(frame, 1) # Chế độ gương
         h, w, _ = frame.shape
         
-        # Cắt khung hình tỉ lệ 3:4 ở chính giữa
-        start_x = (w - CROP_W) // 2
-        frame_34 = frame[:, start_x:start_x+CROP_W]
+        # Cắt khung hình tỉ lệ 1:1 (Vuông) ở chính giữa
+        # Đảm bảo khung hình vuông không vượt quá kích thước thực tế của camera
+        target_size = min(h, w, config.REG_CROP_H)
+        start_x = (w - target_size) // 2
+        start_y = (h - target_size) // 2
+        frame_sq = frame[start_y:start_y+target_size, start_x:start_x+target_size]
         
         step_info = steps[current_step]
         is_close_up = step_info["close_up"]
         
-        # Thiết lập Guide Box (Ô vuông hướng dẫn)
-        box_size = 450 if is_close_up else 320
-        bx1 = (CROP_W - box_size) // 2
-        by1 = (CROP_H - box_size) // 2
+        # Thiết lập Guide Box (Ô vuông hướng dẫn) dựa trên kích thước vuông thực tế
+        box_size = (2 * target_size) // 3 if is_close_up else target_size // 2
+        bx1 = (target_size - box_size) // 2
+        by1 = (target_size - box_size) // 2
         bx2, by2 = bx1 + box_size, by1 + box_size
         
         # BƯỚC 1: Kiểm tra an toàn bằng YOLO (Dùng frame gốc 16:9 để quét rộng hơn)
@@ -116,14 +111,14 @@ def main():
                 if cid == 0: has_person_yolo = True
                 if cid == 67: phone_detected = True
 
-        # BƯỚC 2: Phát hiện khuôn mặt trên khung hình 3:4
-        rgb_34 = cv2.cvtColor(frame_34, cv2.COLOR_BGR2RGB)
+        # BƯỚC 2: Phát hiện khuôn mặt trên khung hình Vuông
+        rgb_sq = cv2.cvtColor(frame_sq, cv2.COLOR_BGR2RGB)
         target_face = None
         face_in_box = False
         
         try:
-            # Gửi ảnh 3:4 xuống Rust để phát hiện mặt
-            arr_cap, sch_cap = core.face_tools.detect_faces_to_arrow(rgb_34, config.FACE_DET_THRESHOLD)
+            # Gửi ảnh vuông xuống Rust để phát hiện mặt
+            arr_cap, sch_cap = core.face_tools.detect_faces_to_arrow(rgb_sq, config.FACE_DET_THRESHOLD)
             detections_arr = pa.Array._import_from_c_capsule(sch_cap, arr_cap)
             
             if len(detections_arr) > 0:
@@ -156,7 +151,7 @@ def main():
             logger.error(f"  [LỖI] Phát hiện khuôn mặt: {e}")
 
         # Hiển thị UI và hướng dẫn
-        frame_display = frame_34.copy()
+        frame_display = frame_sq.copy()
         
         # Đổi màu ô vuông: Xanh khi hợp lệ, Đỏ khi có vấn đề
         box_color = (0, 255, 0) if (face_in_box and not phone_detected) else (0, 0, 255)
@@ -167,13 +162,13 @@ def main():
         draw_text(frame_display, step_info["desc"], (20, 55), 18, (255, 255, 255))
         
         if phone_detected:
-            draw_text(frame_display, "CẢNH BÁO: PHÁT HIỆN ĐIỆN THOẠI!", (20, CROP_H - 80), 20, (0, 0, 255))
+            draw_text(frame_display, "CẢNH BÁO: PHÁT HIỆN ĐIỆN THOẠI!", (20, config.REG_CROP_H - 80), 20, (0, 0, 255))
         elif not face_in_box and target_face:
-            draw_text(frame_display, "VUI LÒNG ĐƯA MẶT VÀO Ô VUÔNG", (20, CROP_H - 80), 20, (0, 165, 255))
+            draw_text(frame_display, "VUI LÒNG ĐƯA MẶT VÀO Ô VUÔNG", (20, config.REG_CROP_H - 80), 20, (0, 165, 255))
         elif face_in_box:
-            draw_text(frame_display, "NHẤN [CÁCH] ĐỂ CHỤP ẢNH", (20, CROP_H - 80), 22, (0, 255, 0))
+            draw_text(frame_display, "NHẤN [CÁCH] ĐỂ CHỤP ẢNH", (20, config.REG_CROP_H - 80), 22, (0, 255, 0))
 
-        cv2.imshow("Dang ky Nhan vien - Portrait Mode", frame_display)
+        cv2.imshow("Dang ky Nhan vien - Square Mode", frame_display)
         
         key = cv2.waitKey(1) & 0xFF
         if key == 32: # Phím Space (Cách)
@@ -193,14 +188,14 @@ def main():
                 lmarks = [(target_face.landmarks[i], target_face.landmarks[i+1]) for i in range(0, 10, 2)]
                 
                 # Cân chỉnh (Align) khuôn mặt dựa trên landmarks
-                face_bytes = core.face_tools.align_face(rgb_34, lmarks)
+                face_bytes = core.face_tools.align_face(rgb_sq, lmarks)
                 embedding = core.get_face_embedding(face_bytes)
                 
                 collected_embeddings.append(embedding)
                 
                 # Hiệu ứng nháy màn hình (Flash) khi chụp thành công
                 flash = np.ones_like(frame_display) * 255
-                cv2.imshow("Dang ky Nhan vien - Portrait Mode", flash)
+                cv2.imshow("Dang ky Nhan vien - Square Mode", flash)
                 cv2.waitKey(50)
                 
                 logger.info(f"  [OK] Đã lưu mẫu {current_step+1}: {step_info['label']}")
