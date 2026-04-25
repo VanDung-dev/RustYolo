@@ -16,11 +16,22 @@ log = "0.4"
 pyo3-log = "0.13.3"
 
 # ONNX Runtime
-ort = { version = "2.0.0-rc.12", features = ["coreml", "ndarray"] }
+ort = { version = "2.0.0-rc.12", features = ["coreml", "ndarray", "copy-dylibs", "download-binaries"] }
 ndarray = { version = "0.17", features = ["rayon"] }
 rayon = "1.10"
 kornia-image = "0.1"
 kornia-imgproc = "0.1"
+image = "0.25"
+
+# Face ID requirements
+nalgebra = "0.34.1"
+thiserror = "2.0.18"
+tokio = { version = "1.40", features = ["rt", "macros", "fs", "sync"] }
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+numpy = "0.28"
 
 [lib]
 name = "rust_yolo"
