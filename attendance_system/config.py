@@ -34,13 +34,20 @@ FACE_DET_THRESHOLD = 0.5
 FACE_REC_THRESHOLD = 0.45  # Ngưỡng chấp nhận danh tính (ArcFace Cosine Similarity)
 
 # Cấu hình Camera & UI
-CAMERA_WIDTH = 1280
-CAMERA_HEIGHT = 720
+CAMERA_WIDTH = 1920
+CAMERA_HEIGHT = 1080
 RECOGNITION_COOLDOWN = 0.5  # Giây giữa các lần nhận diện
 
 # Cấu hình Đăng ký (Registration)
-REG_CROP_W = 540
-REG_CROP_H = 720
+REG_CROP_W = 1080
+REG_CROP_H = 1080
+
+
+# --- Cấu hình Bảo mật & Tiết kiệm năng lượng (Security & Power Saving) ---
+SECURITY_LOCK_DURATION = 5.0  # Thời gian khóa hệ thống khi thấy điện thoại (giây)
+POWER_SAVING_THRESHOLD = 5.0  # Thời gian không thấy người để vào chế độ nghỉ (giây)
+ACTIVE_MODE_FPS = 60          # FPS mục tiêu trong chế độ hoạt động bình thường
+REST_MODE_FPS = 15            # FPS mục tiêu trong chế độ nghỉ
 
 
 # --- Danh sách Class YOLO ---
