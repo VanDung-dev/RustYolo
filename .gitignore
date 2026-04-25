@@ -3,3 +3,4 @@
 /debug
 *.pt
 *.onnx
+*.db
