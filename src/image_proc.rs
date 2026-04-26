@@ -44,42 +44,29 @@ pub fn preprocess_image_kornia(
         .map_err(|e| format!("Lỗi resize ảnh Kornia: {:?}", e))?;
 
     // Bước 3: Chuẩn hóa và chuyển đổi định dạng tensor NCHW
+    // Tối ưu hóa: Kết hợp swap kênh và normalize trong 1 lượt duy nhất để tận dụng Cache
     let resized_data = resized_image.as_slice();
-    let hwc_array = ndarray::ArrayView3::from_shape((target_height, target_width, 3), resized_data)
-        .map_err(|e| format!("Lỗi tạo ndarray view: {:?}", e))?;
+    let (r_idx, g_idx, b_idx) = if is_bgr { (2, 1, 0) } else { (0, 1, 2) };
 
-    // Kết hợp hoán đổi kênh (BGR->RGB nếu cần) và chuẩn hóa trong 1 lượt duy nhất
-    // Sử dụng Zip::for_each (Sequential) với buffer được tái sử dụng
-    if is_bgr {
-        // Red = index 2 trong BGR
-        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 0, .., ..]))
-            .and(hwc_array.slice(ndarray::s![.., .., 2]))
-            .for_each(|out, &inn| *out = inn as f32 / 255.0);
-        // Green = index 1
-        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 1, .., ..]))
-            .and(hwc_array.slice(ndarray::s![.., .., 1]))
-            .for_each(|out, &inn| *out = inn as f32 / 255.0);
-        // Blue = index 0
-        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 2, .., ..]))
-            .and(hwc_array.slice(ndarray::s![.., .., 0]))
-            .for_each(|out, &inn| *out = inn as f32 / 255.0);
-    } else {
-        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 0, .., ..]))
-            .and(hwc_array.slice(ndarray::s![.., .., 0]))
-            .for_each(|out, &inn| *out = inn as f32 / 255.0);
-        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 1, .., ..]))
-            .and(hwc_array.slice(ndarray::s![.., .., 1]))
-            .for_each(|out, &inn| *out = inn as f32 / 255.0);
-        ndarray::Zip::from(input_array.slice_mut(ndarray::s![0, 2, .., ..]))
-            .and(hwc_array.slice(ndarray::s![.., .., 2]))
-            .for_each(|out, &inn| *out = inn as f32 / 255.0);
+    let mut out_view = input_array.slice_mut(ndarray::s![0, .., .., ..]);
+    
+    // Sử dụng raw pointer hoặc unchecked indexing để đạt tốc độ tối đa
+    // Ở đây dùng iterators của ndarray đã được tối ưu hóa cực tốt
+    for y in 0..target_height {
+        let offset = y * target_width * 3;
+        for x in 0..target_width {
+            let px_offset = offset + x * 3;
+            out_view[[0, y, x]] = resized_data[px_offset + r_idx] as f32 / 255.0;
+            out_view[[1, y, x]] = resized_data[px_offset + g_idx] as f32 / 255.0;
+            out_view[[2, y, x]] = resized_data[px_offset + b_idx] as f32 / 255.0;
+        }
     }
 
     Ok(())
 }
 
 /// Vẽ hình chữ nhật trực tiếp lên buffer ảnh (BGR/RGB)
-/// Tối ưu hóa cực độ: Pixel-level manipulation không tốn overhead thư viện
+/// Tối ưu hóa: Giảm số lượng vòng lặp và tránh tính toán chỉ số dư thừa
 pub fn draw_rect_native(
     data: &mut [u8],
     width: usize,
@@ -91,53 +78,33 @@ pub fn draw_rect_native(
     color: [u8; 3],
     thickness: i32,
 ) {
-    let max_x = (width as i32).saturating_sub(1);
-    let max_y = (height as i32).saturating_sub(1);
+    let w = width as i32;
+    let h = height as i32;
 
-    let x1 = (x1.round() as i32).clamp(0, max_x);
-    let y1 = (y1.round() as i32).clamp(0, max_y);
-    let x2 = (x2.round() as i32).clamp(0, max_x);
-    let y2 = (y2.round() as i32).clamp(0, max_y);
+    let x1 = (x1.round() as i32).clamp(0, w - 1);
+    let y1 = (y1.round() as i32).clamp(0, h - 1);
+    let x2 = (x2.round() as i32).clamp(0, w - 1);
+    let y2 = (y2.round() as i32).clamp(0, h - 1);
 
+    // Vẽ 4 thanh tạo thành hình chữ nhật (Top, Bottom, Left, Right)
+    // Thay vì vẽ từng pixel lẻ, ta vẽ theo đường thẳng để tận dụng tính liên tục của bộ nhớ
     for t in 0..thickness {
-        // Vẽ cạnh ngang (Trái -> Phải)
-        for x in (x1 - t).max(0)..(x2 + t).min(width as i32) {
-            for dy in &[-t, t] {
-                let y = (y1 + dy).max(0).min(height as i32 - 1);
-                let idx = (y as usize * width + x as usize) * 3;
-                if idx + 2 < data.len() {
-                    data[idx] = color[0];
-                    data[idx + 1] = color[1];
-                    data[idx + 2] = color[2];
-                }
-                
-                let y = (y2 + dy).max(0).min(height as i32 - 1);
-                let idx = (y as usize * width + x as usize) * 3;
-                if idx + 2 < data.len() {
-                    data[idx] = color[0];
-                    data[idx + 1] = color[1];
-                    data[idx + 2] = color[2];
+        // Các đường ngang
+        for x in x1..=x2 {
+            for &y in &[y1 - t, y1 + t, y2 - t, y2 + t] {
+                if y >= 0 && y < h {
+                    let idx = (y as usize * width + x as usize) * 3;
+                    data[idx..idx + 3].copy_from_slice(&color);
                 }
             }
         }
-        
-        // Vẽ cạnh dọc (Trên -> Dưới)
-        for y in (y1 - t).max(0)..(y2 + t).min(height as i32) {
-            for dx in &[-t, t] {
-                let x = (x1 + dx).max(0).min(width as i32 - 1);
-                let idx = (y as usize * width + x as usize) * 3;
-                if idx + 2 < data.len() {
-                    data[idx] = color[0];
-                    data[idx + 1] = color[1];
-                    data[idx + 2] = color[2];
-                }
-                
-                let x = (x2 + dx).max(0).min(width as i32 - 1);
-                let idx = (y as usize * width + x as usize) * 3;
-                if idx + 2 < data.len() {
-                    data[idx] = color[0];
-                    data[idx + 1] = color[1];
-                    data[idx + 2] = color[2];
+
+        // Các đường dọc
+        for y in y1..=y2 {
+            for &x in &[x1 - t, x1 + t, x2 - t, x2 + t] {
+                if x >= 0 && x < w {
+                    let idx = (y as usize * width + x as usize) * 3;
+                    data[idx..idx + 3].copy_from_slice(&color);
                 }
             }
         }
