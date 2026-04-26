@@ -36,7 +36,8 @@ FACE_REC_THRESHOLD = 0.45  # Ngưỡng chấp nhận danh tính (ArcFace Cosine 
 # Cấu hình Camera & UI
 CAMERA_WIDTH = 1920
 CAMERA_HEIGHT = 1080
-RECOGNITION_COOLDOWN = 0.5  # Giây giữa các lần nhận diện
+RECOGNITION_COOLDOWN = 0.5  # Giây giữa các lần nhận diện (Tần suất quét Face ID)
+STREAM_DELAY_MS = 50       # Độ trễ luồng video (ms)
 
 # Cấu hình Đăng ký (Registration)
 REG_CROP_W = 1080

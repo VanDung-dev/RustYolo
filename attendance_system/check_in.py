@@ -13,6 +13,7 @@ import threading
 import queue
 import logging
 from ui_utils import draw_text
+from collections import deque
 import config
 
 # Cấu hình logger cho module
@@ -99,16 +100,31 @@ def main():
     lock_until_time = 0
     last_person_seen_time = time.time()
     is_resting = False
+    face_results = []
     
-    logger.info("\n[INFO] Hệ thống đang hoạt động. Nhấn 'q' để thoát.")
+    # Khởi tạo bộ đệm Video (Stream Delay như OBS)
+    frame_buffer = deque()
+    buffer_size = int((config.STREAM_DELAY_MS / 1000) * config.ACTIVE_MODE_FPS)
+    
+    logger.info(f"\n[INFO] Hệ thống đang hoạt động (Delay: {config.STREAM_DELAY_MS}ms). Nhấn 'q' để thoát.")
 
     while True:
         ret, frame = vstream.read()
         if not ret: break
 
-        # --- BẮT ĐẦU CHU TRÌNH XỬ LÝ ---
-        now = time.time()
+        # Thêm vào bộ đệm
+        frame_buffer.append(frame)
+        
+        # Nếu chưa đủ bộ đệm thì tiếp tục đợi (Filing buffer)
+        if len(frame_buffer) < buffer_size:
+            continue
+            
+        # Lấy frame từ quá khứ (300ms trước) để xử lý và hiển thị
+        frame = frame_buffer.popleft()
         display_frame = frame.copy()
+        
+        # --- BẮT ĐẦU CHU TRÌNH XỬ LÝ TRÊN FRAME TRỄ ---
+        now = time.time()
         
         # BƯỚC 1: Sử dụng YOLO để lọc Người & Điện thoại (Zero-copy qua Arrow)
         res_caps = person_detector.detect_to_arrow(frame)
@@ -167,27 +183,29 @@ def main():
             elif now - last_person_seen_time > config.POWER_SAVING_THRESHOLD:
                 is_resting = True
 
-        # BƯỚC 3: XỬ LÝ FACE ID - Chỉ khi hệ thống sẵn sàng
+        # BƯỚC 3: XỬ LÝ FACE ID - Sampling Rate để giảm tải tài nguyên
         if has_person and is_system_ready:
+            # Chỉ thực hiện nhận diện nặng sau mỗi khoảng (Chuẩn bị tài nguyên)
             if now - last_recognition_time > config.RECOGNITION_COOLDOWN:
                 face_results = core.process_frame(frame)
-                for res in face_results:
-                    identity = res['identity']
-                    score = res['confidence']
-                    x1, y1, x2, y2 = map(int, res['bbox'])
-                    
-                    # Màu sắc UI: Xanh cho nhân viên, Cam cho người lạ
-                    color = (0, 255, 0) if identity != "Unknown" else (0, 165, 255)
-                    cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-                    draw_text(display_frame, f"{identity} ({score:.2f})", (x1, y1-30),
-                                20, color, 2)
-                                
-                    if identity != "Unknown":
-                        # Tự động ghi nhận vào database điểm danh
-                        core.log_attendance(res['user_id'])
-                        logger.info(f"  [ĐIỂM DANH] {identity} - Độ tin cậy: {score:.2f}")
-                
                 last_recognition_time = now
+            
+            # Luôn vẽ kết quả để tránh nhấp nháy UI
+            for res in face_results:
+                identity = res['identity']
+                score = res['confidence']
+                x1, y1, x2, y2 = map(int, res['bbox'])
+                
+                color = (0, 255, 0) if identity != "Unknown" else (0, 165, 255)
+                cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
+                draw_text(display_frame, f"{identity} ({score:.2f})", (x1, y1-30),
+                            20, color, 2)
+                            
+                if identity != "Unknown" and now - last_recognition_time < 0.05: # Chỉ log khi vừa quét xong
+                    core.log_attendance(res['user_id'])
+                    logger.info(f"  [ĐIỂM DANH] {identity} - Độ tin cậy: {score:.2f}")
+        else:
+            face_results = [] # Xóa kết quả khi không có người hoặc bị khóa
 
         # Tính toán và hiển thị hiệu năng (FPS)
         curr_fps_time = time.time()
