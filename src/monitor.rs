@@ -11,6 +11,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -30,8 +31,8 @@ pub struct PerformanceMonitor {
     engine_fps: f64,
     ai_latency: f64,
     rust_latency: f64,
-    frame_times: Vec<f64>,
-    engine_times: Vec<f64>,
+    frame_times: VecDeque<f64>,
+    engine_times: VecDeque<f64>,
 
     // Thermal data
     current_temp: f32,
@@ -48,6 +49,7 @@ pub struct PerformanceMonitor {
     cached_mem_used_gb: f64,
     cached_mem_total_gb: f64,
     cached_mem_percent: f64,
+    temp_component_idx: Option<usize>,
 }
 
 #[pymethods]
@@ -71,8 +73,8 @@ impl PerformanceMonitor {
             engine_fps: 0.0,
             ai_latency: 0.0,
             rust_latency: 0.0,
-            frame_times: Vec::with_capacity(60),
-            engine_times: Vec::with_capacity(60),
+            frame_times: VecDeque::with_capacity(128),
+            engine_times: VecDeque::with_capacity(128),
             current_temp: 0.0,
             prev_temp: 0.0,
             last_temp_update: Instant::now(),
@@ -86,6 +88,7 @@ impl PerformanceMonitor {
             cached_mem_used_gb: 0.0,
             cached_mem_total_gb: 0.0,
             cached_mem_percent: 0.0,
+            temp_component_idx: None,
         }
     }
 
@@ -136,15 +139,22 @@ impl PerformanceMonitor {
             .unwrap()
             .as_secs_f64();
 
-        self.frame_times.push(now_sys);
-        self.frame_times.retain(|&t| now_sys - t < 1.0);
+        // Tối ưu sliding window: O(1) push/pop thay vì O(N) retain
+        self.frame_times.push_back(now_sys);
+        while let Some(&t) = self.frame_times.front() {
+            if now_sys - t >= 1.0 {
+                self.frame_times.pop_front();
+            } else {
+                break;
+            }
+        }
         self.actual_fps = self.frame_times.len() as f64;
 
         // Tính toán Engine FPS và ANE Load thực tế
         if latency_ms > 0.1 {
-            self.engine_times.push(1000.0 / latency_ms);
-            if self.engine_times.len() > 30 {
-                self.engine_times.remove(0);
+            self.engine_times.push_back(1000.0 / latency_ms);
+            if self.engine_times.len() > 60 {
+                self.engine_times.pop_front();
             }
             let sum: f64 = self.engine_times.iter().sum();
             self.engine_fps = sum / self.engine_times.len() as f64;
@@ -174,33 +184,41 @@ impl PerformanceMonitor {
             self.gpu_load = 0.0;
         }
 
-        // Cập nhật chỉ số nhiệt độ và tìm tên GPU
+        // Cập nhật nhiệt độ và tìm tên GPU (Sử dụng index cache để tối ưu)
         if let Ok(comp) = self.components.lock() {
             let mut max_temp = 0.0;
-            let mut detected_gpu_name = String::new();
-
-            for component in comp.iter() {
-                let label = component.label();
-                let name_lower = label.to_lowercase();
-
-                // 1. Tìm nhiệt độ cao nhất
-                if name_lower.contains("cpu") || name_lower.contains("gpu") || name_lower.contains("die") || 
-                   name_lower.contains("package") || name_lower.contains("core") || name_lower.contains("soc") {
-                    if component.temperature() > max_temp {
-                        max_temp = component.temperature();
-                    }
-                }
-
-                // 2. Cố gắng bắt tên GPU từ label (Ví dụ: "NVIDIA GeForce RTX 3060")
-                if name_lower.contains("gpu") || name_lower.contains("nvidia") || name_lower.contains("amd") || name_lower.contains("intel") {
-                    if detected_gpu_name.is_empty() {
-                        detected_gpu_name = label.to_string();
-                    }
+            
+            if let Some(idx) = self.temp_component_idx {
+                if let Some(c) = comp.get(idx) {
+                    max_temp = c.temperature();
+                } else {
+                    self.temp_component_idx = None; // Reset nếu index không còn hợp lệ
                 }
             }
 
-            if !detected_gpu_name.is_empty() {
-                self.gpu_name_cache = detected_gpu_name;
+            if self.temp_component_idx.is_none() {
+                let mut detected_gpu_name = String::new();
+                for (idx, component) in comp.iter().enumerate() {
+                    let label = component.label();
+                    let name_lower = label.to_lowercase();
+
+                    if name_lower.contains("cpu") || name_lower.contains("gpu") || name_lower.contains("die") || 
+                       name_lower.contains("package") || name_lower.contains("soc") {
+                        if component.temperature() > max_temp {
+                            max_temp = component.temperature();
+                            self.temp_component_idx = Some(idx);
+                        }
+                    }
+
+                    if name_lower.contains("gpu") || name_lower.contains("nvidia") || name_lower.contains("amd") {
+                        if detected_gpu_name.is_empty() {
+                            detected_gpu_name = label.to_string();
+                        }
+                    }
+                }
+                if !detected_gpu_name.is_empty() {
+                    self.gpu_name_cache = detected_gpu_name;
+                }
             }
 
             if max_temp > 0.0 {
