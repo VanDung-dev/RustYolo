@@ -43,8 +43,12 @@ impl YoloV8Detector {
         let session_builder = Session::builder()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Session builder error: {}", e)))?;
         
+        let num_threads = if ep == ExecutionProviderType::CPU { 
+            std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+        } else { 1 };
+
         let session = ep.configure_session(session_builder)?
-            .with_intra_threads(1)
+            .with_intra_threads(num_threads)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
             .commit_from_file(model_path)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Load model error: {}", e)))?;

@@ -23,14 +23,11 @@ impl YoloV8Detector {
         let scale_y = orig_dim.1 as f32 / input_height_f;
 
         // Tối ưu layout: (1, 84, 8400) -> (84, 8400) -> (8400, 84)
-        let out_data_2d = out_data.index_axis(Axis(0), 0).reversed_axes();
-        let out_data_2d = out_data_2d.into_dimensionality::<ndarray::Ix2>().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Dimensionality error: {}", e))
-        })?;
+        let out_data_2d = YoloCommon::reshape_output_v8(out_data)?;
 
         // Tối ưu hóa: Sử dụng Rayon để xử lý song song hàng ngàn anchors cùng lúc
         // Kết hợp lọc ngưỡng ngay trong lúc decode để giảm kích thước vector
-        let mut all_boxes: Vec<(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>)> = out_data_2d.axis_iter(Axis(0))
+        let all_boxes: Vec<(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>)> = out_data_2d.axis_iter(Axis(0))
             .into_par_iter()
             .filter_map(|row| {
                 let scores = row.slice(s![4..4 + num_classes]);
@@ -63,26 +60,7 @@ impl YoloV8Detector {
             })
             .collect();
 
-        // 2. Sắp xếp theo độ tin cậy giảm dần
-        all_boxes.sort_unstable_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
-
-        // 3. NMS (Non-Maximum Suppression)
-        let nms_boxes: Vec<(f32, f32, f32, f32)> = all_boxes.iter().map(|b| (b.0, b.1, b.2, b.3)).collect();
-        let nms_classes: Vec<usize> = all_boxes.iter().map(|b| b.5).collect();
-        let keep_indices = YoloCommon::perform_nms(&nms_boxes, &nms_classes, iou_threshold);
-
-        let mut detections = Vec::with_capacity(keep_indices.len());
-        for &idx in &keep_indices {
-            let (x, y, w, h, conf, class_id, _, _) = &all_boxes[idx];
-            detections.push(YoloDetection {
-                class_id: *class_id as i32,
-                confidence: *conf,
-                x: *x, y: *y, width: *w, height: *h,
-                keypoints: vec![],
-                mask_coeffs: vec![],
-            });
-        }
-
-        Ok(detections)
+        Ok(YoloCommon::finalize_detections(all_boxes, iou_threshold))
     }
 }
+
