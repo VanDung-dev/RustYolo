@@ -38,6 +38,19 @@ CAMERA_WIDTH = 1920
 CAMERA_HEIGHT = 1080
 RECOGNITION_COOLDOWN = 0.5  # Giây giữa các lần nhận diện (Tần suất quét Face ID)
 STREAM_DELAY_MS = 50       # Độ trễ luồng video (ms)
+LOG_ATTENDANCE_WINDOW = 0.05 # Khoảng thời gian xác nhận để ghi log điểm danh (giây)
+
+# --- Cấu hình Màu sắc & Font (UI Aesthetics) ---
+COLOR_DANGER = (0, 0, 255)      # Đỏ
+COLOR_SUCCESS = (0, 255, 0)     # Xanh lá
+COLOR_WARNING = (0, 165, 255)   # Cam
+COLOR_INFO = (255, 255, 255)    # Trắng
+COLOR_RESTING = (150, 150, 150) # Xám
+COLOR_SCANNING = (0, 255, 255)  # Vàng
+
+FONT_SIZE_LARGE = 24
+FONT_SIZE_MEDIUM = 22
+FONT_SIZE_SMALL = 20
 
 # Cấu hình Đăng ký (Registration)
 REG_CROP_W = 1080

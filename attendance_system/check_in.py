@@ -15,6 +15,7 @@ import logging
 from ui_utils import draw_text
 from collections import deque
 import config
+import numpy as np
 
 # Cấu hình logger cho module
 logger = logging.getLogger(__name__)
@@ -65,181 +66,176 @@ class VideoStream:
         self.stopped = True
         self.stream.release()
 
-def main():
-    parser = argparse.ArgumentParser(description="Hệ thống điểm danh nâng cao với CoreML/WebGPU")
-    parser.add_argument("--ep", type=str, default="coreml", help="Execution Provider (coreml, webgpu, cpu)")
-    args = parser.parse_args()
-
-    logger.info(f"\n--- HỆ THỐNG ĐIỂM DANH TỰ ĐỘNG (EP: {args.ep.upper()}) ---")
-    
+def initialize_engines(ep):
+    """Kiểm tra tài nguyên và khởi tạo các engine AI."""
     # 1. Kiểm tra tài nguyên
     for m in [config.YOLO_MODEL_PATH, config.FACE_DETECTOR_PATH, config.FACE_EMBEDDER_PATH]:
         if not os.path.exists(m):
-            logger.error(f"  [LỖI] Không tìm thấy model tại: {m}")
-            return
+            raise FileNotFoundError(f"Không tìm thấy model tại: {m}")
 
-    # 2. Khởi tạo Engine xử lý
-    try:
-        logger.info(f"-> Đang nạp Mô hình phát hiện Người ({args.ep})...")
-        person_detector = rust_yolo.YoloV8Detector(config.YOLO_MODEL_PATH, 0.5, 0.4, args.ep)
-        
-        logger.info(f"-> Đang khởi tạo Logic Face ID ({args.ep})...")
-        core = AttendanceCore(config.FACE_DETECTOR_PATH, config.FACE_EMBEDDER_PATH, config.DB_PATH, execution_provider=args.ep)
-        logger.info("-> Hệ thống đã sẵn sàng vận hành.")
-    except Exception as e:
-        logger.error(f"  [LỖI KHỞI TẠO] {e}")
-        return
-
-    # 3. Khởi chạy luồng Camera
-    vstream = VideoStream(0, config.CAMERA_WIDTH, config.CAMERA_HEIGHT).start()
+    logger.info(f"-> Đang nạp Mô hình phát hiện Người ({ep})...")
+    person_detector = rust_yolo.YoloV8Detector(
+        config.YOLO_MODEL_PATH, 
+        config.YOLO_CONF_THRESHOLD, 
+        config.YOLO_IOU_THRESHOLD, 
+        ep
+    )
     
+    logger.info(f"-> Đang khởi tạo Logic Face ID ({ep})...")
+    core = AttendanceCore(config.FACE_DETECTOR_PATH, config.FACE_EMBEDDER_PATH, config.DB_PATH, execution_provider=ep)
+    
+    return person_detector, core
+
+def run_attendance_system(vstream, person_detector, core):
+    """Vòng lặp xử lý chính của hệ thống."""
+    # Biến quản lý thời gian và hiệu năng
     prev_time = time.time()
     last_recognition_time = 0
-    
-    # Biến quản lý trạng thái
     lock_until_time = 0
     last_person_seen_time = time.time()
-    is_resting = False
+    
+    # Trạng thái hệ thống
     face_results = []
     
     # Khởi tạo bộ đệm Video (Stream Delay như OBS)
     frame_buffer = deque()
     buffer_size = int((config.STREAM_DELAY_MS / 1000) * config.ACTIVE_MODE_FPS)
     
-    logger.info(f"\n[INFO] Hệ thống đang hoạt động (Delay: {config.STREAM_DELAY_MS}ms). Nhấn 'q' để thoát.")
+    logger.info(f"\n[INFO] Hệ thống đang vận hành (Delay: {config.STREAM_DELAY_MS}ms). Nhấn 'q' để thoát.")
 
     while True:
         ret, frame = vstream.read()
         if not ret: break
 
-        # Thêm vào bộ đệm
+        # 1. Quản lý bộ đệm (Stream Delay)
         frame_buffer.append(frame)
-        
-        # Nếu chưa đủ bộ đệm thì tiếp tục đợi (Filing buffer)
         if len(frame_buffer) < buffer_size:
             continue
             
-        # Lấy frame từ quá khứ (300ms trước) để xử lý và hiển thị
         frame = frame_buffer.popleft()
         display_frame = frame.copy()
-        
-        # --- BẮT ĐẦU CHU TRÌNH XỬ LÝ TRÊN FRAME TRỄ ---
         now = time.time()
         
-        # BƯỚC 1: Sử dụng YOLO để lọc Người & Điện thoại (Zero-copy qua Arrow)
+        # 2. Phát hiện đối tượng (YOLO)
         res_caps = person_detector.detect_to_arrow(frame)
         person_arr = pa.Array._import_from_c_capsule(res_caps[1], res_caps[0])
+        class_ids = person_arr.field("class_id").to_numpy() if len(person_arr) > 0 else np.array([])
         
-        has_person = False
-        phone_detected = False
-        person_boxes = []
+        # Xác định chỉ số Phone và Person ngay lập tức
+        phone_idxs = np.where(class_ids == config.CLASS_PHONE)[0]
+        phone_detected = len(phone_idxs) > 0
+        person_idxs = np.where(class_ids == config.CLASS_PERSON)[0] if not phone_detected else []
+        has_person = len(person_idxs) > 0
 
-        if len(person_arr) > 0:
-            class_ids = person_arr.field("class_id").to_numpy()
-            boxes_x = person_arr.field("x").to_numpy()
-            boxes_y = person_arr.field("y").to_numpy()
-            boxes_w = person_arr.field("w").to_numpy()
-            boxes_h = person_arr.field("h").to_numpy()
+        # Vẽ kết quả YOLO (Nếu có phone thì ưu tiên vẽ phone và bỏ qua người)
+        if phone_detected:
+            idx = phone_idxs[0]
+            bx, by, bw, bh = [int(person_arr.field(f).to_numpy()[idx]) for f in ["x", "y", "w", "h"]]
+            cv2.rectangle(display_frame, (bx, by), (bx + bw, by + bh), config.COLOR_DANGER, -1)
+            cv2.rectangle(display_frame, (bx, by), (bx + bw, by + bh), config.COLOR_INFO, 1)
+            draw_text(
+                display_frame, "DANGER: PHONE DETECTED", (bx, by-35),
+                config.FONT_SIZE_MEDIUM, config.COLOR_DANGER, 2
+            )
+            
+        if has_person:
+            xs = person_arr.field("x").to_numpy()[person_idxs].astype(int)
+            ys = person_arr.field("y").to_numpy()[person_idxs].astype(int)
+            ws = person_arr.field("w").to_numpy()[person_idxs].astype(int)
+            hs = person_arr.field("h").to_numpy()[person_idxs].astype(int)
+            for bx, by, bw, bh in zip(xs, ys, ws, hs):
+                cv2.rectangle(display_frame, (bx, by), (bx + bw, by + bh), (255, 0, 0), 1)
 
-            # Tối ưu: Duyệt một lần để xác định cả Phone và Person
-            for i in range(len(person_arr)):
-                cid = class_ids[i]
-                if cid == config.CLASS_PHONE:
-                    phone_detected = True
-                    # Tìm thấy điện thoại -> Ưu tiên cao nhất, thoát sớm
-                    phx, phy, phw, phh = int(boxes_x[i]), int(boxes_y[i]), int(boxes_w[i]), int(boxes_h[i])
-                    cv2.rectangle(display_frame, (phx, phy), (phx + phw, phy + phh), (0, 0, 255), -1)
-                    cv2.rectangle(display_frame, (phx, phy), (phx + phw, phy + phh), (255, 255, 255), 1)
-                    draw_text(display_frame, "DANGER: PHONE DETECTED", (phx, phy-35), 22, (0, 0, 255), 2)
-                    has_person = False 
-                    break
-                elif cid == config.CLASS_PERSON:
-                    has_person = True
-                    person_boxes.append((int(boxes_x[i]), int(boxes_y[i]), int(boxes_w[i]), int(boxes_h[i])))
-
-            # Vẽ box người nếu không bị khóa bởi điện thoại
-            if not phone_detected:
-                for box in person_boxes:
-                    cv2.rectangle(display_frame, (box[0], box[1]), (box[0]+box[2], box[1]+box[3]), (255, 0, 0), 1)
-
-        # BƯỚC 2: QUẢN LÝ TRẠNG THÁI KHÓA VÀ NGHỈ (POWER SAVING)
-        is_system_ready = True
-        countdown = 0
-        
+        # 3. Quản lý trạng thái Khóa/Nghỉ - Tối ưu logic làm phẳng
         if phone_detected:
             lock_until_time = now + config.SECURITY_LOCK_DURATION
+        
+        countdown = max(0, lock_until_time - now)
+        is_system_ready = (countdown == 0) and not phone_detected
+        
+        # Cập nhật thời điểm nhìn thấy người (Hoặc trạng thái đang xử lý/khóa)
+        if has_person or phone_detected or countdown > 0:
             last_person_seen_time = now
-            is_system_ready = False
             is_resting = False
         else:
-            if now < lock_until_time:
-                is_system_ready = False
-                countdown = lock_until_time - now
-                last_person_seen_time = now # Đang đếm ngược thì chưa tính là "không thấy người"
-            
-            if has_person:
-                last_person_seen_time = now
-                is_resting = False
-            elif now - last_person_seen_time > config.POWER_SAVING_THRESHOLD:
-                is_resting = True
+            is_resting = (now - last_person_seen_time > config.POWER_SAVING_THRESHOLD)
 
-        # BƯỚC 3: XỬ LÝ FACE ID - Sampling Rate để giảm tải tài nguyên
-        if has_person and is_system_ready:
-            # Chỉ thực hiện nhận diện nặng sau mỗi khoảng (Chuẩn bị tài nguyên)
-            if now - last_recognition_time > config.RECOGNITION_COOLDOWN:
-                face_results = core.process_frame(frame)
-                last_recognition_time = now
+        # 4. Xử lý Face ID (Sampling Rate)
+        can_recognize = has_person and is_system_ready and (now - last_recognition_time > config.RECOGNITION_COOLDOWN)
+        if can_recognize:
+            face_results = core.process_frame(frame)
+            last_recognition_time = now
+        
+        # Xóa kết quả nếu mất dấu người hoặc bị khóa bảo mật
+        if not (has_person and is_system_ready):
+            face_results = []
             
-            # Luôn vẽ kết quả để tránh nhấp nháy UI
-            for res in face_results:
-                identity = res['identity']
-                score = res['confidence']
-                x1, y1, x2, y2 = map(int, res['bbox'])
-                
-                color = (0, 255, 0) if identity != "Unknown" else (0, 165, 255)
-                cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-                draw_text(display_frame, f"{identity} ({score:.2f})", (x1, y1-30),
-                            20, color, 2)
-                            
-                if identity != "Unknown" and now - last_recognition_time < 0.05: # Chỉ log khi vừa quét xong
-                    core.log_attendance(res['user_id'])
-                    logger.info(f"  [ĐIỂM DANH] {identity} - Độ tin cậy: {score:.2f}")
-        else:
-            face_results = [] # Xóa kết quả khi không có người hoặc bị khóa
+        for res in face_results:
+            identity, score = res['identity'], res['confidence']
+            x1, y1, x2, y2 = map(int, res['bbox'])
+            color = config.COLOR_SUCCESS if identity != "Unknown" else config.COLOR_WARNING
+            cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
+            draw_text(
+                display_frame, f"{identity} ({score:.2f})", (x1, y1-30),
+                config.FONT_SIZE_SMALL, color, 2
+            )
+            if identity != "Unknown" and now - last_recognition_time < config.LOG_ATTENDANCE_WINDOW:
+                core.log_attendance(res['user_id'])
+                logger.info(f"  [ĐIỂM DANH] {identity} - Độ tin cậy: {score:.2f}")
 
-        # Tính toán và hiển thị hiệu năng (FPS)
+        # 5. Hiển thị UI & FPS
         curr_fps_time = time.time()
         fps = 1 / (curr_fps_time - prev_time)
         prev_time = curr_fps_time
         
-        # --- BƯỚC 4: HIỂN THỊ UI & FPS ---
-        # Tối ưu hóa: Sử dụng Rule-based thay vì chuỗi if-elif dài
         status_rules = [
-            (phone_detected, "HE THONG BI KHOA", (0, 0, 255)),
-            (countdown > 0, f"KHOI DONG LAI TRONG {countdown:.1f}s...", (0, 165, 255)),
-            (is_resting, "CHE DO NGHI", (150, 150, 150)),
-            (has_person, "DANG QUET...", (0, 255, 255)),
-            (True, "CHO NGUOI...", (0, 255, 255)) # Mặc định
+            (phone_detected, "HE THONG BI KHOA", config.COLOR_DANGER),
+            (countdown > 0, f"KHOI DONG LAI TRONG {countdown:.1f}s...", config.COLOR_WARNING),
+            (is_resting, "CHE DO NGHI", config.COLOR_RESTING),
+            (has_person, "DANG QUET...", config.COLOR_SCANNING),
+            (True, "CHO NGUOI...", config.COLOR_SCANNING)
         ]
         status_text, status_color = next((txt, clr) for cond, txt, clr in status_rules if cond)
-
-        draw_text(display_frame, f"FPS: {fps:.1f} | {status_text}", (20, 20), 
-                    24, status_color, 2)
-
-        # Hiển thị kết quả
+        draw_text(
+            display_frame, f"FPS: {fps:.1f} | {status_text}", (20, 20),
+            config.FONT_SIZE_LARGE, status_color, 2
+        )
+        
         cv2.imshow("He thong Diem danh Thong minh", display_frame)
         
-        # Kiểm soát FPS: Tính toán thời gian xử lý thực tế để sleep chính xác
+        # 6. Kiểm soát FPS (Power Saving)
         elapsed = time.time() - now
         target_fps = config.REST_MODE_FPS if is_resting else config.ACTIVE_MODE_FPS
         sleep_time = max(0.001, (1.0 / target_fps) - elapsed)
         time.sleep(sleep_time)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if cv2.waitKey(1) & 0xFF == ord('q'): break
 
     vstream.stop()
     cv2.destroyAllWindows()
+
+def main():
+    parser = argparse.ArgumentParser(description="Hệ thống điểm danh nâng cao với CoreML/WebGPU")
+    parser.add_argument("--camera", type=str, default="0", help="Camera ID (0, 1) hoặc URL stream (rtsp://...)")
+    parser.add_argument("--ep", type=str, default="coreml", help="Execution Provider (coreml, webgpu, cpu)")
+    args = parser.parse_args()
+
+    logger.info(f"\n--- HỆ THỐNG ĐIỂM DANH TỰ ĐỘNG (EP: {args.ep.upper()}) ---")
+    
+    try:
+        # Khởi tạo Engine
+        person_detector, core = initialize_engines(args.ep)
+        
+        # Khởi chạy luồng Camera
+        cam_src = int(args.camera) if args.camera.isdigit() else args.camera
+        vstream = VideoStream(cam_src, config.CAMERA_WIDTH, config.CAMERA_HEIGHT).start()
+        
+        # Chạy vòng lặp xử lý chính
+        run_attendance_system(vstream, person_detector, core)
+        
+    except Exception as e:
+        logger.error(f"  [LỖI HỆ THỐNG] {e}")
+        return
 
 if __name__ == "__main__":
     logging.basicConfig(
