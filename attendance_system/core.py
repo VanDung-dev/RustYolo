@@ -39,28 +39,27 @@ class AttendanceCore:
         logger.info(f"-> Đang nạp ArcFace model: {os.path.basename(arcface_path)}...")
         self.face_tools.load_embedder(arcface_path, execution_provider)
 
-    def _init_db_python(self, db_path):
+    @staticmethod
+    def _init_db_python(db_path):
         """Khởi tạo cấu trúc bảng SQLite nếu chưa tồn tại"""
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
+        sqls = [
+            """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 embedding BLOB NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS attendance_logs (
+            )""",
+            """CREATE TABLE IF NOT EXISTS attendance_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(id)
-            )
-        """)
-        conn.commit()
-        conn.close()
+            )"""
+        ]
+        with sqlite3.connect(db_path) as conn:
+            for sql in sqls:
+                conn.execute(sql)
+            conn.commit()
 
     def load_known_users(self):
         """Tải tất cả user và embeddings từ DB vào bộ nhớ để so khớp nhanh"""
@@ -122,23 +121,20 @@ class AttendanceCore:
                 best_scores = [-1.0] * num_faces
 
             # Gom kết quả cuối cùng cho từng khuôn mặt
+            # Gom kết quả cuối cùng cho từng khuôn mặt (Tối ưu hóa tránh if-else lồng nhau)
             for i in range(num_faces):
-                identity = "Unknown"
-                user_id = None
                 score = float(best_scores[i])
+                is_known = score > 0.45
                 
-                if score > 0.45: # Ngưỡng chấp nhận của ArcFace
-                    idx = int(best_indices[i])
-                    identity = self.known_users[idx]['name']
-                    user_id = self.known_users[idx]['id']
-
-                # Lấy bbox từ Arrow StructArray
+                # Ánh xạ thông tin user (Default là Unknown nếu không khớp)
+                user = self.known_users[int(best_indices[i])] if is_known else {"name": "Unknown", "id": None}
+                
                 det = detections_arr[i]
                 results.append({
                     "bbox": [det['x1'].as_py(), det['y1'].as_py(), det['x2'].as_py(), det['y2'].as_py()],
-                    "identity": identity,
+                    "identity": user['name'],
                     "confidence": score,
-                    "user_id": user_id
+                    "user_id": user['id']
                 })
                 
             return results
