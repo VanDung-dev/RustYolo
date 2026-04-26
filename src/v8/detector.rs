@@ -2,9 +2,8 @@
 //!
 //! Chịu trách nhiệm khởi tạo Session và điều phối luồng inference.
 
-use arrow::array::{Array, Float32Array, Int32Array, StructArray};
+use arrow::array::{Array, Float32Array};
 
-use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
 use ndarray::{Array4};
 use ort::ep::{CoreML, ExecutionProvider};
@@ -12,7 +11,6 @@ use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyList};
-use std::sync::Arc;
 use std::time::Instant;
 
 use crate::yolo::{YoloDetection, ModelConfig, YoloTask, ExecutionProviderType};
@@ -186,48 +184,16 @@ impl YoloV8Detector {
     )> {
         let (detections, proto_flat, _width, _height) = self.run_detection_pipeline(py, numpy_array)?;
 
-        let class_ids = Int32Array::from(detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
-        let confidences =
-            Float32Array::from(detections.iter().map(|d| d.confidence).collect::<Vec<_>>());
-        let boxes_x = Float32Array::from(detections.iter().map(|d| d.x).collect::<Vec<_>>());
-        let boxes_y = Float32Array::from(detections.iter().map(|d| d.y).collect::<Vec<_>>());
-        let boxes_w = Float32Array::from(detections.iter().map(|d| d.width).collect::<Vec<_>>());
-        let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
-
-        let mut fields = Self::build_default_arrow_fields();
-        let mut arrays = Self::build_default_arrow_arrays(class_ids, confidences, boxes_x, boxes_y, boxes_w, boxes_h);
-
-        if self.num_keypoints > 0 {
-            fields.push(Field::new(
-                "keypoints",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
-                true,
-            ));
-            arrays.push(Self::build_list_array(&detections, |det| {
-                det.keypoints.iter().flat_map(|&(x, y, conf)| [x, y, conf]).collect::<Vec<_>>().leak()
-            }));
-        }
-
-        if self.num_mask_coeffs > 0 {
-            fields.push(Field::new(
-                "mask_coeffs",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
-                true,
-            ));
-            arrays.push(Self::build_list_array(&detections, |det| &det.mask_coeffs));
-        }
-
-        let struct_array =
-            StructArray::try_new(Fields::from(fields), arrays, None).map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e))
-            })?;
-
-        let (arr_cap, sch_cap) = crate::ffi::export_to_python(py, struct_array.to_data())?;
+        let (arr_cap, sch_cap) = crate::ffi::export_detections_to_arrow(
+            py,
+            &detections,
+            self.num_keypoints,
+            self.num_mask_coeffs,
+        )?;
 
         let (proto_arr, proto_sch) = if let Some(proto) = proto_flat {
             let proto_array = Float32Array::from(proto);
-            let proto_data = proto_array.to_data();
-            let (pa, ps) = crate::ffi::export_to_python(py, proto_data)?;
+            let (pa, ps) = crate::ffi::export_to_python(py, proto_array.to_data())?;
             (pa.into_any().unbind(), ps.into_any().unbind())
         } else {
             (py.None(), py.None())
@@ -289,33 +255,14 @@ impl YoloV8Detector {
             );
         }
 
-        // 4. Đóng gói kết quả Arrow (Giống detect_to_arrow)
-        let class_ids = Int32Array::from(detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
-        let confidences = Float32Array::from(detections.iter().map(|d| d.confidence).collect::<Vec<_>>());
-        let boxes_x = Float32Array::from(detections.iter().map(|d| d.x).collect::<Vec<_>>());
-        let boxes_y = Float32Array::from(detections.iter().map(|d| d.y).collect::<Vec<_>>());
-        let boxes_w = Float32Array::from(detections.iter().map(|d| d.width).collect::<Vec<_>>());
-        let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
+        // 4. Đóng gói kết quả Arrow
+        let (arr_cap, sch_cap) = crate::ffi::export_detections_to_arrow(
+            py,
+            &detections,
+            self.num_keypoints,
+            self.num_mask_coeffs,
+        )?;
 
-        let mut fields = Self::build_default_arrow_fields();
-        let mut arrays = Self::build_default_arrow_arrays(class_ids, confidences, boxes_x, boxes_y, boxes_w, boxes_h);
-
-        if self.num_keypoints > 0 {
-            fields.push(Field::new("keypoints", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true));
-            arrays.push(Self::build_list_array(&detections, |det| {
-                det.keypoints.iter().flat_map(|&(x, y, conf)| [x, y, conf]).collect::<Vec<_>>().leak()
-            }));
-        }
-
-        if self.num_mask_coeffs > 0 {
-            fields.push(Field::new("mask_coeffs", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true));
-            arrays.push(Self::build_list_array(&detections, |det| &det.mask_coeffs));
-        }
-
-        let struct_array = StructArray::try_new(Fields::from(fields), arrays, None)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e)))?;
-
-        let (arr_cap, sch_cap) = crate::ffi::export_to_python(py, struct_array.to_data())?;
         let (proto_arr, proto_sch) = if let Some(proto) = proto_flat {
             let proto_array = Float32Array::from(proto);
             let (pa, ps) = crate::ffi::export_to_python(py, proto_array.to_data())?;
@@ -356,46 +303,6 @@ impl YoloV8Detector {
 }
 
 impl YoloV8Detector {
-    #[inline]
-    pub(crate) fn build_default_arrow_fields() -> Vec<Field> {
-        vec![
-            Field::new("class_id", DataType::Int32, false),
-            Field::new("confidence", DataType::Float32, false),
-            Field::new("x", DataType::Float32, false),
-            Field::new("y", DataType::Float32, false),
-            Field::new("w", DataType::Float32, false),
-            Field::new("h", DataType::Float32, false),
-        ]
-    }
-
-    #[inline]
-    pub(crate) fn build_default_arrow_arrays(class_ids: Int32Array, confidences: Float32Array, boxes_x: Float32Array, boxes_y: Float32Array, boxes_w: Float32Array, boxes_h: Float32Array) -> Vec<Arc<dyn Array>> {
-        vec![
-            Arc::new(class_ids),
-            Arc::new(confidences),
-            Arc::new(boxes_x),
-            Arc::new(boxes_y),
-            Arc::new(boxes_w),
-            Arc::new(boxes_h),
-        ]
-    }
-
-    #[inline]
-    pub(crate) fn build_list_array<F, T>(detections: &[YoloDetection], mut extractor: F) -> Arc<dyn Array>
-    where
-        F: FnMut(&YoloDetection) -> &[T],
-        T: Into<f32> + Copy,
-    {
-        let mut builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
-        for det in detections {
-            for value in extractor(det) {
-                builder.values().append_value((*value).into());
-            }
-            builder.append(true);
-        }
-        Arc::new(builder.finish())
-    }
-
     #[inline]
     pub(crate) fn create_empty_detection(class_id: i32, confidence: f32) -> YoloDetection {
         YoloDetection {

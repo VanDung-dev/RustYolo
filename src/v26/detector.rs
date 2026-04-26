@@ -2,9 +2,8 @@
 //!
 //! Chịu trách nhiệm khởi tạo Session NMS-Free (v26/v10).
 
-use arrow::array::{Array, Float32Array, Int32Array, StructArray};
+use arrow::array::{Array, Float32Array};
 
-use arrow::datatypes::{DataType, Field, Fields};
 use log::{debug, info, warn};
 use ndarray::Array4;
 use ort::ep::{CoreML, ExecutionProvider};
@@ -12,7 +11,6 @@ use ort::session::Session;
 use ort::value::Value;
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyList};
-use std::sync::Arc;
 use std::time::Instant;
 
 use crate::yolo::{YoloDetection, ModelConfig, YoloTask, ExecutionProviderType};
@@ -161,62 +159,12 @@ impl YoloV26Detector {
         let (width, height) = self.prepare_input(numpy_array)?;
         let results = self.run_inference_internal(py, (width, height))?;
 
-        let class_ids = Int32Array::from(results.detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
-        let confidences = Float32Array::from(results.detections.iter().map(|d| d.confidence).collect::<Vec<_>>());
-        let boxes_x = Float32Array::from(results.detections.iter().map(|d| d.x).collect::<Vec<_>>());
-        let boxes_y = Float32Array::from(results.detections.iter().map(|d| d.y).collect::<Vec<_>>());
-        let boxes_w = Float32Array::from(results.detections.iter().map(|d| d.width).collect::<Vec<_>>());
-        let boxes_h = Float32Array::from(results.detections.iter().map(|d| d.height).collect::<Vec<_>>());
-
-        let mut fields = vec![
-            Field::new("class_id", DataType::Int32, false),
-            Field::new("confidence", DataType::Float32, false),
-            Field::new("x", DataType::Float32, false),
-            Field::new("y", DataType::Float32, false),
-            Field::new("w", DataType::Float32, false),
-            Field::new("h", DataType::Float32, false),
-        ];
-        let mut arrays: Vec<Arc<dyn Array>> = vec![
-            Arc::new(class_ids), Arc::new(confidences),
-            Arc::new(boxes_x), Arc::new(boxes_y), Arc::new(boxes_w), Arc::new(boxes_h),
-        ];
-
-        if self.num_keypoints > 0 {
-            fields.push(Field::new(
-                "keypoints",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
-                true,
-            ));
-            let mut kp_builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
-            for det in &results.detections {
-                for (x, y, conf) in &det.keypoints {
-                    kp_builder.values().append_value(*x);
-                    kp_builder.values().append_value(*y);
-                    kp_builder.values().append_value(*conf);
-                }
-                kp_builder.append(true);
-            }
-            arrays.push(Arc::new(kp_builder.finish()));
-        }
-
-        if self.num_mask_coeffs > 0 {
-            fields.push(Field::new(
-                "mask_coeffs",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
-                true,
-            ));
-            let mut mc_builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
-            for det in &results.detections {
-                for c in &det.mask_coeffs { mc_builder.values().append_value(*c); }
-                mc_builder.append(true);
-            }
-            arrays.push(Arc::new(mc_builder.finish()));
-        }
-
-        let struct_array = StructArray::try_new(Fields::from(fields), arrays, None)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e)))?;
-
-        let (arr_cap, sch_cap) = crate::ffi::export_to_python(py, struct_array.to_data())?;
+        let (arr_cap, sch_cap) = crate::ffi::export_detections_to_arrow(
+            py,
+            &results.detections,
+            self.num_keypoints,
+            self.num_mask_coeffs,
+        )?;
         
         let (p_arr, p_sch) = if let Some(p) = results.proto {
             let proto_array = Float32Array::from(p.into_raw_vec_and_offset().0);
@@ -276,56 +224,13 @@ impl YoloV26Detector {
             );
         }
 
-        // 4. Đóng gói kết quả Arrow (Giống detect_to_arrow)
-        let class_ids = Int32Array::from(detections.iter().map(|d: &YoloDetection| d.class_id).collect::<Vec<i32>>());
-        let confidences = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.confidence).collect::<Vec<f32>>());
-        let boxes_x = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.x).collect::<Vec<f32>>());
-        let boxes_y = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.y).collect::<Vec<f32>>());
-        let boxes_w = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.width).collect::<Vec<f32>>());
-        let boxes_h = Float32Array::from(detections.iter().map(|d: &YoloDetection| d.height).collect::<Vec<f32>>());
-
-        let mut fields = vec![
-            Field::new("class_id", DataType::Int32, false),
-            Field::new("confidence", DataType::Float32, false),
-            Field::new("x", DataType::Float32, false),
-            Field::new("y", DataType::Float32, false),
-            Field::new("w", DataType::Float32, false),
-            Field::new("h", DataType::Float32, false),
-        ];
-        let mut arrays: Vec<Arc<dyn Array>> = vec![
-            Arc::new(class_ids), Arc::new(confidences),
-            Arc::new(boxes_x), Arc::new(boxes_y),
-            Arc::new(boxes_w), Arc::new(boxes_h),
-        ];
-
-        if self.num_keypoints > 0 {
-            fields.push(Field::new("keypoints", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true));
-            let mut kp_builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
-            for det in &detections {
-                for (x, y, conf) in &det.keypoints {
-                    kp_builder.values().append_value(*x);
-                    kp_builder.values().append_value(*y);
-                    kp_builder.values().append_value(*conf);
-                }
-                kp_builder.append(true);
-            }
-            arrays.push(Arc::new(kp_builder.finish()));
-        }
-
-        if self.num_mask_coeffs > 0 {
-            fields.push(Field::new("mask_coeffs", DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), true));
-            let mut mc_builder = arrow::array::ListBuilder::new(arrow::array::Float32Builder::new());
-            for det in &detections {
-                for c in &det.mask_coeffs { mc_builder.values().append_value(*c); }
-                mc_builder.append(true);
-            }
-            arrays.push(Arc::new(mc_builder.finish()));
-        }
-
-        let struct_array = StructArray::try_new(Fields::from(fields), arrays, None)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e)))?;
-
-        let (arr_cap, sch_cap) = crate::ffi::export_to_python(py, struct_array.to_data())?;
+        // 4. Đóng gói kết quả Arrow
+        let (arr_cap, sch_cap) = crate::ffi::export_detections_to_arrow(
+            py,
+            &detections,
+            self.num_keypoints,
+            self.num_mask_coeffs,
+        )?;
         
         let (p_arr, p_sch) = if let Some(p) = proto_flat {
             let data_vec: Vec<f32> = p.into_raw_vec_and_offset().0;
