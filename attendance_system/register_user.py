@@ -122,7 +122,9 @@ def collect_user_data(vstream, person_detector, core, name):
         
         step_info = steps[current_step]
         # Guide Box: Tính toán trực tiếp dựa trên tỉ lệ cạnh so với chiều cao cửa sổ
-        side_ratio = config.REG_GUIDE_BOX_SIDE_RATIO_CLOSEUP if step_info["close_up"] else config.REG_GUIDE_BOX_SIDE_RATIO_NORMAL
+        side_ratio = (
+            config.REG_GUIDE_BOX_SIDE_RATIO_CLOSEUP if step_info["close_up"] else config.REG_GUIDE_BOX_SIDE_RATIO_NORMAL
+        )
         box_size = int(target_size * side_ratio)
         bx1 = by1 = (target_size - box_size) // 2
         bx2 = by2 = bx1 + box_size
@@ -147,7 +149,9 @@ def collect_user_data(vstream, person_detector, core, name):
                 best_idx = np.argmax([(d['x2'].as_py()-d['x1'].as_py())*(d['y2'].as_py()-d['y1'].as_py()) for d in detections])
                 det = detections[best_idx]
                 fx1, fy1, fx2, fy2 = [det[f].as_py() for f in ['x1', 'y1', 'x2', 'y2']]
-                target_face = FaceDetection(bbox=[fx1, fy1, fx2, fy2], score=det['score'].as_py(), landmarks=det['landmarks'].as_py())
+                target_face = FaceDetection(
+                    bbox=[fx1, fy1, fx2, fy2], score=det['score'].as_py(), landmarks=det['landmarks'].as_py()
+                )
                 
                 # Kiểm tra mặt trong Guide Box
                 margin = 20
@@ -158,11 +162,21 @@ def collect_user_data(vstream, person_detector, core, name):
         # 4. Hiển thị UI & Trạng thái
         frame_display = frame_sq.copy()
         is_ready_to_capture = face_in_box and not phone_detected
+        
+        # Vẽ nền đen trong suốt cho phần trên và dưới để chữ nổi bật
+        ui_overlay = frame_display.copy()
+        cv2.rectangle(ui_overlay, (0, 0), (target_size, 90), (0, 0, 0), -1) # Top bar
+        cv2.rectangle(ui_overlay, (0, target_size - 100), (target_size, target_size), (0, 0, 0), -1) # Bottom bar
+        cv2.addWeighted(ui_overlay, 0.5, frame_display, 0.5, 0, frame_display)
+
         box_color = config.COLOR_SUCCESS if is_ready_to_capture else config.COLOR_DANGER
         cv2.rectangle(frame_display, (bx1, by1), (bx2, by2), box_color, 2)
         
         # Tiêu đề bước thực hiện
-        draw_text(frame_display, f"BƯỚC {current_step+1}/{len(steps)}: {step_info['label']}", (20, 20), config.FONT_SIZE_LARGE, config.COLOR_SUCCESS)
+        draw_text(
+            frame_display, f"BƯỚC {current_step+1}/{len(steps)}: {step_info['label']}",
+            (20, 20), config.FONT_SIZE_LARGE, config.COLOR_SUCCESS, is_bold=True
+        )
         draw_text(frame_display, step_info["desc"], (20, 55), 18, config.COLOR_INFO)
         
         # Xác định thông báo trạng thái dựa trên các quy tắc ưu tiên
@@ -173,7 +187,10 @@ def collect_user_data(vstream, person_detector, core, name):
             (True, "ĐANG ĐỢI KHUÔN MẶT...", config.COLOR_INFO)
         ]
         status_msg, status_color = next((txt, clr) for cond, txt, clr in status_rules if cond)
-        draw_text(frame_display, status_msg, (20, target_size - 80), config.FONT_SIZE_MEDIUM if is_ready_to_capture else config.FONT_SIZE_SMALL, status_color)
+        draw_text(
+            frame_display, status_msg, (20, target_size - 80),
+            config.FONT_SIZE_MEDIUM if is_ready_to_capture else config.FONT_SIZE_SMALL, status_color, is_bold=True
+        )
 
         cv2.imshow("Dang ky Nhan vien - Square Mode", frame_display)
         

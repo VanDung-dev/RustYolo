@@ -24,7 +24,7 @@ def get_font(size):
             _font_cache[size] = ImageFont.load_default()
     return _font_cache[size]
 
-def draw_text(img, text, pos, font_size=20, color=(0, 255, 0), thickness=2):
+def draw_text(img, text, pos, font_size=20, color=(0, 255, 0), is_bold=True):
     """
     Vẽ văn bản (hỗ trợ Tiếng Việt) lên ảnh OpenCV.
     
@@ -34,7 +34,7 @@ def draw_text(img, text, pos, font_size=20, color=(0, 255, 0), thickness=2):
         pos: Tọa độ (x, y) bắt đầu vẽ (góc trên bên trái).
         font_size: Kích thước chữ.
         color: Màu sắc định dạng BGR (OpenCV style).
-        thickness: Placeholder để tương thích với cv2.putText (không dùng trực tiếp trong PIL).
+        is_bold: Nếu True, sẽ vẽ chữ in đậm bằng cách thêm stroke.
     """
     # 1. Chuyển đổi ảnh OpenCV (BGR) sang PIL (RGB)
     pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -46,12 +46,13 @@ def draw_text(img, text, pos, font_size=20, color=(0, 255, 0), thickness=2):
     # 3. Chuyển màu BGR (OpenCV) sang RGB (PIL)
     color_rgb = (color[2], color[1], color[0])
     
-    # 4. Vẽ văn bản lên ảnh PIL
-    draw.text(pos, text, font=font, fill=color_rgb)
+    # 4. Vẽ văn bản lên ảnh PIL (Sử dụng stroke_width để giả lập in đậm)
+    stroke_width = 1 if is_bold else 0
+    draw.text(pos, text, font=font, fill=color_rgb, stroke_width=stroke_width, stroke_fill=color_rgb)
     
     # 5. Chuyển đổi ảnh PIL ngược lại thành OpenCV (BGR)
     res_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     
-    # 6. Cập nhật lại mảng byte của ảnh gốc để không cần copy toàn bộ
+    # 6. Cập nhật lại mảng byte của ảnh gốc
     img[:] = res_img[:]
     return img

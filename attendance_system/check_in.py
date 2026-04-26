@@ -175,8 +175,16 @@ def run_attendance_system(vstream, person_detector, core):
             x1, y1, x2, y2 = map(int, res['bbox'])
             color = config.COLOR_SUCCESS if identity != "Unknown" else config.COLOR_WARNING
             cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
+            
+            # Vẽ nền đen trong suốt cho label tên (giúp chữ nổi bật hơn)
+            label_w = 160 # Chiều rộng ước tính cho text
+            label_h = 35
+            label_overlay = display_frame.copy()
+            cv2.rectangle(label_overlay, (x1, y1 - label_h), (x1 + label_w, y1), (0, 0, 0), -1)
+            cv2.addWeighted(label_overlay, 0.5, display_frame, 0.5, 0, display_frame)
+            
             draw_text(
-                display_frame, f"{identity} ({score:.2f})", (x1, y1-30),
+                display_frame, f"{identity} ({score:.2f})", (x1 + 5, y1 - 30),
                 config.FONT_SIZE_SMALL, color, 2
             )
             if identity != "Unknown" and now - last_recognition_time < config.LOG_ATTENDANCE_WINDOW:
@@ -188,17 +196,22 @@ def run_attendance_system(vstream, person_detector, core):
         fps = 1 / (curr_fps_time - prev_time)
         prev_time = curr_fps_time
         
+        # Vẽ nền đen trong suốt cho thanh trạng thái phía trên
+        overlay = display_frame.copy()
+        cv2.rectangle(overlay, (0, 0), (display_frame.shape[1], 65), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.5, display_frame, 0.5, 0, display_frame)
+        
         status_rules = [
-            (phone_detected, "HE THONG BI KHOA", config.COLOR_DANGER),
-            (countdown > 0, f"KHOI DONG LAI TRONG {countdown:.1f}s...", config.COLOR_WARNING),
-            (is_resting, "CHE DO NGHI", config.COLOR_RESTING),
-            (has_person, "DANG QUET...", config.COLOR_SCANNING),
-            (True, "CHO NGUOI...", config.COLOR_SCANNING)
+            (phone_detected, "HỆ THỐNG BỊ KHÓA", config.COLOR_DANGER),
+            (countdown > 0, f"KHỞI ĐỘNG LẠI TRONG {countdown:.1f}s...", config.COLOR_WARNING),
+            (is_resting, "CHẾ ĐỘ NGHỈ", config.COLOR_RESTING),
+            (has_person, "ĐANG QUÉT...", config.COLOR_SCANNING),
+            (True, "CHỜ NGƯỜI...", config.COLOR_SCANNING)
         ]
         status_text, status_color = next((txt, clr) for cond, txt, clr in status_rules if cond)
         draw_text(
             display_frame, f"FPS: {fps:.1f} | {status_text}", (20, 20),
-            config.FONT_SIZE_LARGE, status_color, 2
+            config.FONT_SIZE_LARGE, status_color, 2, is_bold=True
         )
         
         cv2.imshow("He thong Diem danh Thong minh", display_frame)
