@@ -6,15 +6,15 @@ Tối ưu mô hình YOLO hiệu suất cao và hệ thống điểm danh Face ID
 
 ## 🚀 Đặc điểm kỹ thuật
 
-| Đặc tính | Giá trị                                               |
-|---|-------------------------------------------------------|
-| Kiến trúc | Hybrid Rust + Python (Hiệu năng Rust + Linh hoạt Python) |
-| Inference Engine | ONNX Runtime + CoreML / WebGPU (Vulkan, DX, Metal)    |
-| Face ID | SCRFD (Detection) + ArcFace (Embedding) + SQLite      |
-| Data Transfer | Apache Arrow C Data Interface **Zero Copy**           |
-| Đa luồng | Rayon data parallelism (NMS & Preprocess)             |
-| Thermal Control | Adaptive Thermal Scheduling (Tự động điều tiết FPS)  |
-| Latency yolov8n | ~10.4ms (CoreML), ~11.8ms (WebGPU) trên M4 Pro            |
+| Đặc tính | Giá trị                                                         |
+|---|-----------------------------------------------------------------|
+| Kiến trúc | Hybrid Rust + Python (Hiệu năng Rust + Linh hoạt Python)        |
+| Inference Engine | ONNX Runtime + CoreML / WebGPU (Vulkan, DX, Metal)              |
+| Face ID | SCRFD (Detection) + ArcFace (Embedding) + SQLite                |
+| Data Transfer | Apache Arrow C Data Interface **Zero Copy**                     |
+| Đa luồng | Rayon data parallelism (NMS & Preprocess)                       |
+| Thermal Control | Adaptive Thermal Scheduling (Tự động điều tiết FPS)             |
+| Latency yolov8n | ~9.07ms (CoreML), ~10.31ms (WebGPU), ~21.71ms (CPU) trên M4 Pro |
 
 ---
 
@@ -230,33 +230,33 @@ python main.py --model yolov8n.onnx
 
 ### 1. Apple CoreML (Tối ưu nhất cho Mac)
 
-| Model | TOTAL LATAENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
-|---|---|---|---|---|
-| yolov8n | ~10.4 ms | ~96.4 fps | 60 fps | Cực kỳ mượt |
-| yolov8s | ~15.2 ms | ~65.9 fps | 60 fps | Cực kỳ mượt |
-| yolov8m | ~21.9 ms | ~45.7 fps | 60 fps | Rất mượt |
-| yolov8l | ~31.3 ms | ~32.0 fps | 60 fps | Mượt |
-| yolov8x | ~40.3 ms | ~24.8 fps | 60 fps | Mượt |
+| Model | TOTAL LATENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
+|---|---------------|------------|---|---|
+| yolov8n | ~9.07 ms      | ~110.2 fps | 60 fps | Cực kỳ mượt |
+| yolov8s | ~14.08 ms     | ~71.0 fps  | 60 fps | Cực kỳ mượt |
+| yolov8m | ~20.55 ms     | ~48.7 fps  | 60 fps | Rất mượt |
+| yolov8l | ~29.13 ms     | ~34.3 fps  | 60 fps | Mượt |
+| yolov8x | ~38.71 ms     | ~25.8 fps  | 60 fps | Mượt |
 
 ### 2. WebGPU (Đa nền tảng / GPU chung)
 
 | Model | TOTAL LATENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
-|---|---|---|---|---|
-| yolov8n | ~11.8 ms   | ~85.1 fps | 60 fps | Cực kỳ mượt |
-| yolov8s | ~23.2 ms   | ~43.0 fps | 60 fps | Rất mượt |
-| yolov8m | ~48.5 ms   | ~20.6 fps | 60 fps | Ổn định |
-| yolov8l | ~89.4 ms   | ~11.2 fps | 60 fps | Thấp |
-| yolov8x | ~133.6 ms  | ~7.5 fps | 60 fps | Rất chậm |
+|---|---------------|------------|---|---|
+| yolov8n | ~10.31 ms     | ~97.0 fps  | 60 fps | Cực kỳ mượt |
+| yolov8s | ~20.89 ms     | ~47.9 fps  | 60 fps | Rất mượt |
+| yolov8m | ~46.56 ms     | ~21.5 fps  | 60 fps | Ổn định |
+| yolov8l | ~84.85 ms     | ~11.8 fps  | 60 fps | Thấp |
+| yolov8x | ~128.60 ms    | ~7.8 fps   | 60 fps | Rất chậm |
 
 ### 3. CPU thuần (Không tăng tốc GPU)
 
-| Model | TOTAL LATAENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
-|---|---|---|---|---|
-| yolov8n | ~25.8 ms | ~38.8 fps | 60 fps | Mượt |
-| yolov8s | ~54.8 ms | ~18.3 fps | 60 fps | Thấp |
-| yolov8m | ~119.4 ms | ~8.4 fps | 60 fps | Rất chậm |
-| yolov8l | ~218.8 ms | ~4.6 fps | 60 fps | Lag |
-| yolov8x | ~306.2 ms | ~3.3 fps | 60 fps | Rất lag |
+| Model | TOTAL LATENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
+|---|---------------|------------|---|---|
+| yolov8n | ~21.71 ms     | ~46.1 fps  | 60 fps | Mượt |
+| yolov8s | ~33.58 ms     | ~29.8 fps  | 60 fps | Thấp |
+| yolov8m | ~66.27 ms     | ~15.1 fps  | 60 fps | Rất chậm |
+| yolov8l | ~124.78 ms    | ~8.0 fps   | 60 fps | Lag |
+| yolov8x | ~173.84 ms    | ~5.8 fps   | 60 fps | Rất lag |
 
 > **Tổng kết**: 
 > * **CoreML** là lựa chọn số 1 trên macOS, mang lại tốc độ và hiệu suất năng lượng tốt nhất.
