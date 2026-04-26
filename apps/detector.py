@@ -14,7 +14,7 @@ import numpy as np
 import pyarrow as pa
 import logging
 import os
-from PIL import Image, ImageDraw, ImageFont
+from PIL import ImageFont
 
 # Cấu hình logger cho module
 logging.basicConfig(level=logging.INFO)
@@ -217,9 +217,12 @@ class YoloDetector:
                 label_text = f"{name} {conf:.2f}"
 
             # Vẽ Label Background + Text bằng OpenCV (Tiết kiệm 5-10ms so với PIL)
-            (text_w, text_h), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
+            (text_w, text_h), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
             cv2.rectangle(annotated, (x1, label_y - text_h - baseline), (x1 + text_w, label_y + baseline), (0, 0, 0), -1)
-            cv2.putText(annotated, label_text, (x1, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(
+                annotated, label_text, (x1, label_y), cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (255, 255, 255), 2, cv2.LINE_AA
+            )
 
         # 4. Vẽ Skeleton (Vẽ lại bằng OpenCV vì logic skeleton phức tạp)
         if self.is_pose_model:
@@ -350,8 +353,14 @@ class YoloDetector:
             y_pos = 75 + (i * 35)
             
             # Vẽ text bằng OpenCV
-            cv2.putText(annotated, f"#{i+1}", (25, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1, cv2.LINE_AA)
-            cv2.putText(annotated, label[:25], (70, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(
+                annotated, f"#{i+1}", (25, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (0, 255, 0), 2, cv2.LINE_AA
+            )
+            cv2.putText(
+                annotated, label[:25], (70, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (255, 255, 255), 2, cv2.LINE_AA
+            )
             
             # Vẽ bar
             bar_start_x = 240
@@ -361,6 +370,9 @@ class YoloDetector:
             cv2.rectangle(annotated, (bar_start_x, y_pos + 5), (bar_start_x + bar_w, y_pos + 20), (0, 255, 0), -1)
             
             # % text
-            cv2.putText(annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1, cv2.LINE_AA)
+            cv2.putText(
+                annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA
+            )
             
         return annotated

@@ -45,7 +45,7 @@ def create_stats_panel(
 
     def draw_text(text, pos, font, color_bgr):
         color_rgb = (color_bgr[2], color_bgr[1], color_bgr[0])
-        draw.text(pos, str(text), font=font, fill=color_rgb)
+        draw.text(pos, str(text), font=font, fill=color_rgb, stroke_width=1, stroke_fill=color_rgb)
 
     y_offset = 35
     
