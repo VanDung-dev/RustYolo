@@ -10,8 +10,6 @@ use image::buffer::ConvertBuffer;
 use std::sync::Mutex;
 use std::sync::Arc;
 use rayon::prelude::*;
-use ort::ep::{CoreML, ExecutionProvider, ExecutionProviderDispatch};
-use log::{info, warn};
 use numpy::PyReadonlyArray3;
 
 // Các import cho Arrow để truyền dữ liệu hiệu năng cao
@@ -38,8 +36,8 @@ impl FaceToolbox {
     /// Nạp model ArcFace để trích xuất embedding
     #[pyo3(signature = (model_path, execution_provider="coreml"))]
     fn load_embedder(&self, model_path: String, execution_provider: &str) -> PyResult<()> {
-        let ep_list = self.get_ep_list(execution_provider);
-        let embedder = ArcFaceEmbedder::new(&model_path, &ep_list)
+        let ep = crate::yolo::ExecutionProviderType::from_str(execution_provider);
+        let embedder = ArcFaceEmbedder::new(&model_path, &ep.get_dispatch())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         let mut lock = self.embedder.lock().map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Lỗi khóa Mutex (Embedder)"))?;
         *lock = Some(embedder);
@@ -49,8 +47,8 @@ impl FaceToolbox {
     /// Nạp model SCRFD để phát hiện khuôn mặt
     #[pyo3(signature = (model_path, input_size, execution_provider="coreml"))]
     fn load_detector(&self, model_path: String, input_size: (u32, u32), execution_provider: &str) -> PyResult<()> {
-        let ep_list = self.get_ep_list(execution_provider);
-        let detector = ScrfdDetector::new(&model_path, input_size, 0.5, 0.4, &ep_list)
+        let ep = crate::yolo::ExecutionProviderType::from_str(execution_provider);
+        let detector = ScrfdDetector::new(&model_path, input_size, 0.5, 0.4, &ep.get_dispatch())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         let mut lock = self.detector.lock().map_err(|_| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Lỗi khóa Mutex (Detector)"))?;
         *lock = Some(detector);
@@ -215,39 +213,5 @@ impl FaceToolbox {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
         Ok(embedding)
-    }
-}
-
-impl FaceToolbox {
-    /// Lấy danh sách Execution Providers dựa trên yêu cầu
-    fn get_ep_list(&self, ep_str: &str) -> Vec<ExecutionProviderDispatch> {
-        let mut providers = Vec::new();
-        match ep_str.to_lowercase().as_str() {
-            "coreml" => {
-                if CoreML::default().is_available().unwrap_or(false) {
-                    info!("🍎 FaceID: Kích hoạt CoreML (ANE/GPU)...");
-                    providers.push(CoreML::default()
-                        .with_subgraphs(true)
-                        .with_low_precision_accumulation_on_gpu(true)
-                        .with_compute_units(ort::ep::coreml::ComputeUnits::All)
-                        .build());
-                } else {
-                    warn!("FaceID: CoreML không khả dụng, dùng CPU.");
-                }
-            }
-            "webgpu" => {
-                #[cfg(feature = "webgpu")]
-                {
-                    if ort::ep::WebGPU::default().is_available().unwrap_or(false) {
-                        info!("🌐 FaceID: Kích hoạt WebGPU...");
-                        providers.push(ort::ep::WebGPU::default().build());
-                    } else {
-                        warn!("FaceID: WebGPU không khả dụng, dùng CPU.");
-                    }
-                }
-            }
-            _ => {}
-        }
-        providers
     }
 }
