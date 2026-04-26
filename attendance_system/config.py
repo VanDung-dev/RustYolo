@@ -55,6 +55,8 @@ FONT_SIZE_SMALL = 20
 # Cấu hình Đăng ký (Registration)
 REG_CROP_W = 1080
 REG_CROP_H = 1080
+REG_GUIDE_BOX_SIDE_RATIO_NORMAL = 0.5     # Tỉ lệ cạnh ô vuông (1/2 chiều cao cửa sổ)
+REG_GUIDE_BOX_SIDE_RATIO_CLOSEUP = 0.667   # Tỉ lệ cạnh ô vuông (2/3 chiều cao cửa sổ)
 
 
 # --- Cấu hình Bảo mật & Tiết kiệm năng lượng (Security & Power Saving) ---
