@@ -53,10 +53,10 @@ unsafe fn release_capsule<T>(capsule: *mut pyo3::ffi::PyObject, name: &[u8]) {
 
 /// Export ArrayData Arrow thành 2 PyCapsule truyền sang Python
 /// Không có sao chép dữ liệu, chỉ truyền ownership con trỏ
-pub fn export_to_python<'py>(
-    py: Python<'py>,
+pub fn export_to_python(
+    py: Python<'_>,
     data: ArrayData,
-) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>)> {
+) -> PyResult<(Bound<'_, PyCapsule>, Bound<'_, PyCapsule>)> {
     let ffi_array = FFI_ArrowArray::new(&data);
     let ffi_schema = FFI_ArrowSchema::try_from(data.data_type()).map_err(|e| {
         PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow FFI Error: {}", e))

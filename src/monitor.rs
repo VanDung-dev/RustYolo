@@ -343,3 +343,9 @@ impl PerformanceMonitor {
         stats.into()
     }
 }
+
+impl Drop for PerformanceMonitor {
+    fn drop(&mut self) {
+        self.stop_background_monitor();
+    }
+}

@@ -11,7 +11,8 @@
 use kornia_image::{Image, ImageSize, allocator::CpuAllocator};
 use kornia_imgproc::interpolation::InterpolationMode;
 use kornia_imgproc::resize::resize_fast_rgb;
-use ndarray::Array4;
+use ndarray::{Array4, Axis};
+use rayon::prelude::*;
 
 pub fn preprocess_image_kornia(
     raw_data: &[u8],
@@ -45,22 +46,24 @@ pub fn preprocess_image_kornia(
 
     // Bước 3: Chuẩn hóa và chuyển đổi định dạng tensor NCHW
     // Tối ưu hóa: Kết hợp swap kênh và normalize trong 1 lượt duy nhất để tận dụng Cache
+    // Sử dụng Rayon để xử lý song song các hàng của ảnh
     let resized_data = resized_image.as_slice();
     let (r_idx, g_idx, b_idx) = if is_bgr { (2, 1, 0) } else { (0, 1, 2) };
 
     let mut out_view = input_array.slice_mut(ndarray::s![0, .., .., ..]);
     
-    // Sử dụng raw pointer hoặc unchecked indexing để đạt tốc độ tối đa
-    // Ở đây dùng iterators của ndarray đã được tối ưu hóa cực tốt
-    for y in 0..target_height {
-        let offset = y * target_width * 3;
-        for x in 0..target_width {
-            let px_offset = offset + x * 3;
-            out_view[[0, y, x]] = resized_data[px_offset + r_idx] as f32 / 255.0;
-            out_view[[1, y, x]] = resized_data[px_offset + g_idx] as f32 / 255.0;
-            out_view[[2, y, x]] = resized_data[px_offset + b_idx] as f32 / 255.0;
-        }
-    }
+    out_view.axis_iter_mut(Axis(1)) // Axis 1 là Height trong (C, H, W) sau khi slice N
+        .into_par_iter()
+        .enumerate()
+        .for_each(|(y, mut slice)| {
+            let offset = y * target_width * 3;
+            for x in 0..target_width {
+                let px_offset = offset + x * 3;
+                slice[[0, x]] = resized_data[px_offset + r_idx] as f32 / 255.0;
+                slice[[1, x]] = resized_data[px_offset + g_idx] as f32 / 255.0;
+                slice[[2, x]] = resized_data[px_offset + b_idx] as f32 / 255.0;
+            }
+        });
 
     Ok(())
 }
@@ -86,27 +89,32 @@ pub fn draw_rect_native(
     let x2 = (x2.round() as i32).clamp(0, w - 1);
     let y2 = (y2.round() as i32).clamp(0, h - 1);
 
-    // Vẽ 4 thanh tạo thành hình chữ nhật (Top, Bottom, Left, Right)
-    // Thay vì vẽ từng pixel lẻ, ta vẽ theo đường thẳng để tận dụng tính liên tục của bộ nhớ
-    for t in 0..thickness {
-        // Các đường ngang
-        for x in x1..=x2 {
-            for &y in &[y1 - t, y1 + t, y2 - t, y2 + t] {
-                if y >= 0 && y < h {
-                    let idx = (y as usize * width + x as usize) * 3;
-                    data[idx..idx + 3].copy_from_slice(&color);
-                }
+    // Helper closure để vẽ một pixel an toàn
+    let mut draw_pixel = |x: i32, y: i32| {
+        if x >= 0 && x < w && y >= 0 && y < h {
+            let idx = (y as usize * width + x as usize) * 3;
+            if idx + 3 <= data.len() {
+                data[idx..idx + 3].copy_from_slice(&color);
             }
         }
+    };
 
-        // Các đường dọc
+    // Vẽ 4 thanh tạo thành hình chữ nhật (Top, Bottom, Left, Right)
+    for t in 0..thickness {
+        // Đường ngang (Top & Bottom)
+        for x in x1..=x2 {
+            draw_pixel(x, y1 + t);
+            draw_pixel(x, y1 - t);
+            draw_pixel(x, y2 + t);
+            draw_pixel(x, y2 - t);
+        }
+
+        // Đường dọc (Left & Right)
         for y in y1..=y2 {
-            for &x in &[x1 - t, x1 + t, x2 - t, x2 + t] {
-                if x >= 0 && x < w {
-                    let idx = (y as usize * width + x as usize) * 3;
-                    data[idx..idx + 3].copy_from_slice(&color);
-                }
-            }
+            draw_pixel(x1 + t, y);
+            draw_pixel(x1 - t, y);
+            draw_pixel(x2 + t, y);
+            draw_pixel(x2 - t, y);
         }
     }
 }

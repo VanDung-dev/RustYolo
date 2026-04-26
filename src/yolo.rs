@@ -15,14 +15,7 @@ use std::time::Instant;
 /// Different execution providers available for ONNX Runtime
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutionProviderType {
-    /// Apple CoreML (macOS only)
-    CoreML,
-    /// WebGPU (cross-platform graphics API, includes Vulkan/Metal/DirectX12)
-    WebGPU,
-    /// CPU fallback
-    CPU,
-}
+pub enum ExecutionProviderType {CoreML, WebGPU, CPU}
 
 impl ExecutionProviderType {
     pub fn from_str(s: &str) -> Self {
@@ -62,11 +55,13 @@ impl ExecutionProviderType {
     pub fn get_dispatch(&self) -> Vec<ort::ep::ExecutionProviderDispatch> {
         match self {
             Self::CoreML => {
-                vec![CoreML::default()
-                    .with_subgraphs(true)
-                    .with_low_precision_accumulation_on_gpu(true)
-                    .with_compute_units(ort::ep::coreml::ComputeUnits::All)
-                    .build()]
+                vec![
+                    CoreML::default()
+                        .with_subgraphs(true)
+                        .with_low_precision_accumulation_on_gpu(true)
+                        .with_compute_units(ort::ep::coreml::ComputeUnits::All)
+                        .build(),
+                ]
             }
             Self::WebGPU => {
                 #[cfg(feature = "webgpu")]
@@ -78,8 +73,12 @@ impl ExecutionProviderType {
         }
     }
 
-    pub fn configure_session(&self, builder: ort::session::builder::SessionBuilder) -> PyResult<ort::session::builder::SessionBuilder> {
-        builder.with_execution_providers(self.get_dispatch())
+    pub fn configure_session(
+        &self,
+        builder: ort::session::builder::SessionBuilder,
+    ) -> PyResult<ort::session::builder::SessionBuilder> {
+        builder
+            .with_execution_providers(self.get_dispatch())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 }
@@ -126,10 +125,7 @@ impl YoloDetection {
 
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum YoloArchitecture {
-    V8, // YOLOv8, v11 (Anchor-based + NMS)
-    V26, // YOLOv26, v10 (NMS-Free)
-}
+pub enum YoloArchitecture {V8, V26}
 
 #[pyclass(from_py_object)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,6 +156,8 @@ impl ModelConfig {
             YoloArchitecture::V8
         };
 
+        let input_size = (640, 640);
+
         let task = if name.contains("-pose") { YoloTask::Pose }
             else if name.contains("-seg") { YoloTask::Segmentation }
             else if name.contains("-obb") { YoloTask::OBB }
@@ -177,13 +175,16 @@ impl ModelConfig {
             _ => {}
         }
 
-        info!("Xác định Model: Kiến trúc={:?}, Nhiệm vụ={:?}, đầu vào=640x640, đường dẫn={}", arch, task, path);
+        info!(
+            "Xác định Model: Kiến trúc={:?}, Nhiệm vụ={:?}, đầu vào={}x{}, đường dẫn={}",
+            arch, task, input_size.0, input_size.1, path
+        );
 
-        Self { arch, task, input_size: (640, 640), num_classes, num_keypoints, num_mask_coeffs }
+        Self { arch, task, input_size, num_classes, num_keypoints, num_mask_coeffs }
     }
 }
 
-/// Shared utilities for YOLO detectors to reduce redundancy
+/// Tiện ích dùng chung cho máy dò YOLO để giảm dư thừa
 pub(crate) struct YoloCommon {
     pub(crate) session: Session,
     pub(crate) input_width: usize,
@@ -210,10 +211,16 @@ impl YoloCommon {
         let t_pre = Instant::now();
         
         crate::image_proc::preprocess_image_kornia(
-            raw_data, width, height, self.input_width, self.input_height, 
-            &mut self.input_tensor_buffer, true
-        ).map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
-        
+            raw_data,
+            width,
+            height,
+            self.input_width,
+            self.input_height,
+            &mut self.input_tensor_buffer,
+            true,
+        )
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e))?;
+
         let elapsed = t_pre.elapsed().as_secs_f64() * 1000.0;
         Ok((width, height, elapsed))
     }
@@ -259,6 +266,46 @@ impl YoloCommon {
         result
     }
 
+    pub fn reshape_output_v8(out_data: &ndarray::ArrayViewD<f32>) -> PyResult<ndarray::Array2<f32>> {
+        // Tối ưu layout: (1, 84, 8400) -> (84, 8400) -> (8400, 84)
+        let out_data_2d = out_data.index_axis(ndarray::Axis(0), 0).reversed_axes();
+        out_data_2d
+            .into_dimensionality::<ndarray::Ix2>()
+            .map(|a| a.to_owned())
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Dimensionality error: {}", e))
+            })
+    }
+
+    pub fn finalize_detections(
+        mut all_boxes: Vec<(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>)>,
+        iou_threshold: f32,
+    ) -> Vec<YoloDetection> {
+        // 1. Sắp xếp theo độ tin cậy giảm dần
+        all_boxes.sort_unstable_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
+
+        // 2. Chuẩn bị dữ liệu cho NMS
+        let nms_boxes: Vec<(f32, f32, f32, f32)> = all_boxes.iter().map(|b| (b.0, b.1, b.2, b.3)).collect();
+        let nms_classes: Vec<usize> = all_boxes.iter().map(|b| b.5).collect();
+        
+        // 3. Thực hiện NMS
+        let keep_indices = Self::perform_nms(&nms_boxes, &nms_classes, iou_threshold);
+
+        // 4. Xây dựng kết quả cuối cùng
+        let mut detections = Vec::with_capacity(keep_indices.len());
+        for &idx in &keep_indices {
+            let (x, y, w, h, conf, class_id, kps, mcs) = &all_boxes[idx];
+            detections.push(YoloDetection {
+                class_id: *class_id as i32,
+                confidence: *conf,
+                x: *x, y: *y, width: *w, height: *h,
+                keypoints: kps.clone(),
+                mask_coeffs: mcs.clone(),
+            });
+        }
+        detections
+    }
+
     pub fn decode_classification(out_data: &[f32]) -> Vec<YoloDetection> {
         let max_val = out_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let exps: Vec<f32> = out_data.iter().map(|x| (x - max_val).exp()).collect();
@@ -268,12 +315,19 @@ impl YoloCommon {
         let mut indexed: Vec<(usize, f32)> = probs.iter().enumerate().map(|(i, &p)| (i, p)).collect();
         indexed.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
-        indexed.into_iter().take(5).map(|(idx, prob)| YoloDetection {
-            class_id: idx as i32,
-            confidence: prob,
-            x: 0.0, y: 0.0, width: 0.0, height: 0.0,
-            keypoints: vec![],
-            mask_coeffs: vec![],
-        }).collect()
+        indexed
+            .into_iter()
+            .take(5)
+            .map(|(idx, prob)| YoloDetection {
+                class_id: idx as i32,
+                confidence: prob,
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+                keypoints: vec![],
+                mask_coeffs: vec![],
+            })
+            .collect()
     }
 }
