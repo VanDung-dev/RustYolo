@@ -42,11 +42,24 @@ impl YoloV26Detector {
         crate::security::validate_model_path(model_path)?;
         
         let ep = ExecutionProviderType::from_str(execution_provider);
+        
+        // Kiểm tra an toàn: YOLOv26 (NMS-Free) có các Op không tương thích ổn định với CoreML trên macOS
+        if ep == ExecutionProviderType::CoreML {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "⚠️ YOLOv26 (NMS-Free) KHÔNG hỗ trợ CoreML do lỗi tương thích Op (GatherElements). \n\
+                 Vui lòng khởi chạy lại với: CPU hoặc WebGPU"
+            ));
+        }
+
         let session_builder = Session::builder()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Session builder error: {}", e)))?;
         
+        let num_threads = if ep == ExecutionProviderType::CPU { 
+            std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)
+        } else { 1 };
+
         let session = ep.configure_session(session_builder)?
-            .with_intra_threads(1)
+            .with_intra_threads(num_threads)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
             .commit_from_file(model_path)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Load model error: {}", e)))?;
