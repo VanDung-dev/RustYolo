@@ -47,7 +47,12 @@ def draw_text(img, text, pos, font_size=20, color=(0, 255, 0), is_bold=True):
     color_rgb = (color[2], color[1], color[0])
     
     # 4. Vẽ văn bản lên ảnh PIL (Sử dụng stroke_width để giả lập in đậm)
-    stroke_width = 1 if is_bold else 0
+    if isinstance(is_bold, bool):
+        stroke_width = 1 if is_bold else 0
+    else:
+        # Nếu truyền vào số (VD: 2), sử dụng trực tiếp làm stroke_width
+        stroke_width = int(is_bold)
+        
     draw.text(pos, text, font=font, fill=color_rgb, stroke_width=stroke_width, stroke_fill=color_rgb)
     
     # 5. Chuyển đổi ảnh PIL ngược lại thành OpenCV (BGR)

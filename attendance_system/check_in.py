@@ -135,7 +135,7 @@ def run_attendance_system(vstream, person_detector, core):
             cv2.rectangle(display_frame, (bx, by), (bx + bw, by + bh), config.COLOR_INFO, 1)
             draw_text(
                 display_frame, "DANGER: PHONE DETECTED", (bx, by-35),
-                config.FONT_SIZE_MEDIUM, config.COLOR_DANGER, 2
+                config.FONT_SIZE_MEDIUM, config.COLOR_DANGER, is_bold=True
             )
             
         if has_person:
@@ -185,7 +185,7 @@ def run_attendance_system(vstream, person_detector, core):
             
             draw_text(
                 display_frame, f"{identity} ({score:.2f})", (x1 + 5, y1 - 30),
-                config.FONT_SIZE_SMALL, color, 2
+                config.FONT_SIZE_SMALL, color, is_bold=True
             )
             if identity != "Unknown" and now - last_recognition_time < config.LOG_ATTENDANCE_WINDOW:
                 core.log_attendance(res['user_id'])
@@ -211,7 +211,7 @@ def run_attendance_system(vstream, person_detector, core):
         status_text, status_color = next((txt, clr) for cond, txt, clr in status_rules if cond)
         draw_text(
             display_frame, f"FPS: {fps:.1f} | {status_text}", (20, 20),
-            config.FONT_SIZE_LARGE, status_color, 2, is_bold=True
+            config.FONT_SIZE_LARGE, status_color, is_bold=True
         )
         
         cv2.imshow("He thong Diem danh Thong minh", display_frame)
