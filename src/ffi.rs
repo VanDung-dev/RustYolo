@@ -8,11 +8,15 @@
 //!
 //! Đây là phần quan trọng nhất làm cho dự án này nhanh hơn tất cả các dự án khác.
 
-use arrow::array::ArrayData;
+use arrow::array::{Array, ArrayData, Float32Array, Int32Array, StructArray, ListBuilder, Float32Builder};
+use arrow::datatypes::{DataType, Field, Fields};
 use arrow::ffi::{FFI_ArrowArray, FFI_ArrowSchema};
 use pyo3::ffi::{PyCapsule_GetPointer, PyCapsule_New};
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
+use std::sync::Arc;
+
+use crate::yolo::YoloDetection;
 
 /// Tên chuẩn định dạng PyCapsule theo yêu cầu của PyArrow
 /// Không được thay đổi giá trị này
@@ -72,4 +76,77 @@ unsafe extern "C" fn release_array(capsule: *mut pyo3::ffi::PyObject) {
 unsafe extern "C" fn release_schema(capsule: *mut pyo3::ffi::PyObject) {
     unsafe { release_capsule::<FFI_ArrowSchema>(capsule, SCHEMA_NAME) };
     // Destructor FFI_ArrowSchema tự động giải phóng toàn bộ bộ nhớ schema
+}
+
+/// Chuyển đổi Vec<YoloDetection> thành Apache Arrow capsules (Zero Copy)
+pub fn export_detections_to_arrow<'py>(
+    py: Python<'py>,
+    detections: &[YoloDetection],
+    num_keypoints: usize,
+    num_mask_coeffs: usize,
+) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>)> {
+    let class_ids = Int32Array::from(detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
+    let confidences = Float32Array::from(detections.iter().map(|d| d.confidence).collect::<Vec<_>>());
+    let boxes_x = Float32Array::from(detections.iter().map(|d| d.x).collect::<Vec<_>>());
+    let boxes_y = Float32Array::from(detections.iter().map(|d| d.y).collect::<Vec<_>>());
+    let boxes_w = Float32Array::from(detections.iter().map(|d| d.width).collect::<Vec<_>>());
+    let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
+
+    let mut fields = vec![
+        Field::new("class_id", DataType::Int32, false),
+        Field::new("confidence", DataType::Float32, false),
+        Field::new("x", DataType::Float32, false),
+        Field::new("y", DataType::Float32, false),
+        Field::new("w", DataType::Float32, false),
+        Field::new("h", DataType::Float32, false),
+    ];
+
+    let mut arrays: Vec<Arc<dyn Array>> = vec![
+        Arc::new(class_ids),
+        Arc::new(confidences),
+        Arc::new(boxes_x),
+        Arc::new(boxes_y),
+        Arc::new(boxes_w),
+        Arc::new(boxes_h),
+    ];
+
+    if num_keypoints > 0 {
+        fields.push(Field::new(
+            "keypoints",
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+            true,
+        ));
+        let mut builder = ListBuilder::new(Float32Builder::new());
+        for det in detections {
+            for &(x, y, conf) in &det.keypoints {
+                builder.values().append_value(x);
+                builder.values().append_value(y);
+                builder.values().append_value(conf);
+            }
+            builder.append(true);
+        }
+        arrays.push(Arc::new(builder.finish()));
+    }
+
+    if num_mask_coeffs > 0 {
+        fields.push(Field::new(
+            "mask_coeffs",
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+            true,
+        ));
+        let mut builder = ListBuilder::new(Float32Builder::new());
+        for det in detections {
+            for &val in &det.mask_coeffs {
+                builder.values().append_value(val);
+            }
+            builder.append(true);
+        }
+        arrays.push(Arc::new(builder.finish()));
+    }
+
+    let struct_array = StructArray::try_new(Fields::from(fields), arrays, None).map_err(|e| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Arrow error: {}", e))
+    })?;
+
+    export_to_python(py, struct_array.to_data())
 }
