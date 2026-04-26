@@ -333,46 +333,66 @@ class YoloDetector:
 
     @staticmethod
     def _draw_classification_overlay(annotated: np.ndarray, results: list) -> np.ndarray:
-        """Vẽ panel hiển thị Top-5 classification dùng font JetBrains Mono."""
+        """Vẽ panel hiển thị Top-5 classification tối ưu."""
         if not results:
             return annotated
         
-        panel_w = 400
-        panel_h = 30 + (len(results) * 35)
+        # 1. Tính toán kích thước panel linh hoạt
+        num_res = len(results)
+        row_h = 40
+        header_h = 60
+        panel_w = 480
+        panel_h = header_h + (num_res * row_h) + 10
         
+        # 2. Vẽ nền mờ (Glassmorphism effect)
         overlay = annotated.copy()
-        cv2.rectangle(overlay, (10, 10), (panel_w, panel_h), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.6, annotated, 0.4, 0, annotated)
+        cv2.rectangle(overlay, (15, 15), (panel_w, panel_h), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.75, annotated, 0.25, 0, annotated)
         
-        # Tối ưu: Vẽ trực tiếp bằng OpenCV để tránh conversion
+        # Viền mỏng cho panel
+        cv2.rectangle(annotated, (15, 15), (panel_w, panel_h), (60, 60, 60), 1, cv2.LINE_AA)
+        
+        # 3. Tiêu đề
+        cv2.putText(
+            annotated, "TOP CLASSIFICATION", (35, 50), cv2.FONT_HERSHEY_SIMPLEX,
+            0.7, (0, 255, 255), 2, cv2.LINE_AA
+        )
+        cv2.line(annotated, (35, 60), (panel_w - 20, 60), (80, 80, 80), 1, cv2.LINE_AA)
+        
+        # 4. Vẽ từng dòng kết quả
         for i, det in enumerate(results):
             class_id = det["class_id"]
             conf = det["confidence"]
             
             label = IMAGENET_CLASSES[class_id] if 0 <= class_id < len(IMAGENET_CLASSES) else f"ID:{class_id}"
-            y_pos = 75 + (i * 35)
+            y_row = header_h + 35 + (i * row_h)
             
-            # Vẽ text bằng OpenCV
+            # STT và Tên Class
             cv2.putText(
-                annotated, f"#{i+1}", (25, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX,
-                0.7, (0, 255, 0), 2, cv2.LINE_AA
-            )
-            cv2.putText(
-                annotated, label[:25], (70, y_pos + 20), cv2.FONT_HERSHEY_SIMPLEX,
-                0.7, (255, 255, 255), 2, cv2.LINE_AA
+                annotated, f"#{i+1}", (35, y_row), cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (0, 255, 0), 2, cv2.LINE_AA
             )
             
-            # Vẽ bar
-            bar_start_x = 240
-            bar_max_w = 120
-            bar_w = int(conf * bar_max_w)
-            cv2.rectangle(annotated, (bar_start_x, y_pos + 5), (bar_start_x + bar_max_w, y_pos + 20), (50, 50, 50), -1)
-            cv2.rectangle(annotated, (bar_start_x, y_pos + 5), (bar_start_x + bar_w, y_pos + 20), (0, 255, 0), -1)
-            
-            # % text
+            # Cắt ngắn nhãn nếu quá dài
+            display_label = label[:22] + ".." if len(label) > 22 else label
             cv2.putText(
-                annotated, f"{conf*100:.1f}%", (bar_start_x + bar_max_w + 5, y_pos + 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA
+                annotated, display_label, (85, y_row), cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (240, 240, 240), 1, cv2.LINE_AA
+            )
+            
+            # Thanh Progress Bar cho Confidence
+            bar_x = 320
+            bar_w_max = 100
+            bar_w = int(conf * bar_w_max)
+            # Background bar
+            cv2.rectangle(annotated, (bar_x, y_row - 12), (bar_x + bar_w_max, y_row + 2), (40, 40, 40), -1)
+            # Active bar (màu xanh lá)
+            cv2.rectangle(annotated, (bar_x, y_row - 12), (bar_x + bar_w, y_row + 2), (0, 200, 0), -1)
+            
+            # Phần trăm %
+            cv2.putText(
+                annotated, f"{conf*100:.1f}%", (bar_x + bar_w_max + 8, y_row),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA
             )
             
         return annotated
