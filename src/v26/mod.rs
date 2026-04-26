@@ -6,12 +6,10 @@
 //! - `base`: Logic decode Detection.
 //! - `pose`: Logic decode Pose Estimation.
 //! - `seg`: Logic decode Segmentation.
-//! - `cls`: Logic decode Classification.
 
 mod detector;
 mod base;
 mod pose;
 mod seg;
-mod cls;
 
 pub use detector::YoloV26Detector;

@@ -175,7 +175,7 @@ impl YoloV8Detector {
         } else { None };
 
         if self.is_cls_model {
-            return Ok((Self::decode_cls_v8(out_extract.1, self.common.num_classes), proto_flat));
+            return Ok((YoloCommon::decode_classification(out_extract.1), proto_flat));
         }
 
         let t_nms = Instant::now();
@@ -191,15 +191,5 @@ impl YoloV8Detector {
         self.last_nms_ms = t_nms.elapsed().as_secs_f64() * 1000.0;
 
         Ok((detections, proto_flat))
-    }
-
-    pub(crate) fn create_empty_detection(class_id: i32, confidence: f32) -> YoloDetection {
-        YoloDetection {
-            class_id,
-            confidence,
-            x: 0.0, y: 0.0, width: 0.0, height: 0.0,
-            keypoints: vec![],
-            mask_coeffs: vec![],
-        }
     }
 }

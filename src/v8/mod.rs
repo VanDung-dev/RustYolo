@@ -7,13 +7,11 @@
 //! - `pose`: Logic decode cho Pose Estimation (Keypoints).
 //! - `seg`: Logic decode cho Instance Segmentation.
 //! - `obb`: Logic decode cho Oriented Bounding Box.
-//! - `cls`: Logic decode cho Classification.
 
 pub(crate) mod detector;
 mod base;
 mod pose;
 mod seg;
 mod obb;
-mod cls;
 
 pub use detector::YoloV8Detector;
