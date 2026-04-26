@@ -4,3 +4,4 @@
 *.pt
 *.onnx
 *.db
+assets/benchmark_images/

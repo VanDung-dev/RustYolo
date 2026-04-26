@@ -45,9 +45,9 @@ def parse_log(log_path):
                     latencies = []
                     continue
             
-            # 2. Tìm giá trị Total latency từ Rust Engine hoặc tóm tắt benchmark
-            # Format: Total=19.17ms HOẶC Average Latency = 12.89ms
-            perf_match = re.search(r'(?:Total=|Average Latency\s*=\s*)([\d\.]+)ms', line)
+            # 2. Tìm giá trị độ trễ (Latency)
+            # Hỗ trợ các format: Total=19.17ms, Average Latency = 12.89ms, Latency TB = 26.98ms
+            perf_match = re.search(r'(?:Total=|Average Latency\s*=\s*|Latency TB\s*=\s*)([\d\.]+)ms', line)
             if perf_match:
                 latencies.append(float(perf_match.group(1)))
                 
@@ -60,9 +60,9 @@ def parse_log(log_path):
 def main():
     # 1. Đọc dữ liệu từ các file log
     providers = {
-        'CoreML': 'output/log_coreml.txt',
-        'WebGPU': 'output/log_webgpu.txt',
-        'CPU': 'output/log_cpu.txt'
+        'CoreML': '../output/log_coreml.txt',
+        'WebGPU': '../output/log_webgpu.txt',
+        'CPU': '../output/log_cpu.txt'
     }
     
     all_results = []
@@ -85,50 +85,64 @@ def main():
 
     df = pd.DataFrame(all_results)
     
-    # 2. Cấu hình giao diện biểu đồ
-    sns.set_theme(style="whitegrid")
-    colors = ["#007AFF", "#34C759", "#8E8E93"] # Apple Style: Blue, Green, Gray
+    # 2. Cấu hình giao diện biểu đồ (Premium Dark Mode)
+    plt.rcParams.update({
+        "figure.facecolor": "#0F172A", # Slate 900
+        "axes.facecolor": "#1E293B",   # Slate 800
+        "text.color": "#F8FAFC",       # Slate 50
+        "axes.labelcolor": "#CBD5E1",  # Slate 300
+        "xtick.color": "#94A3B8",      # Slate 400
+        "ytick.color": "#94A3B8",      # Slate 400
+        "grid.color": "#334155",       # Slate 700
+        "font.family": "sans-serif"
+    })
+    
+    colors = ["#38BDF8", "#4ADE80", "#94A3B8"] # Cyan, Green, Slate
     
     # --- Biểu đồ Latency ---
-    plt.figure(figsize=(14, 8))
-    ax = sns.barplot(x="Model", y="Latency (ms)", hue="Execution Provider", data=df, palette=colors)
+    plt.figure(figsize=(14, 8), dpi=120)
+    ax = sns.barplot(x="Model", y="Latency (ms)", hue="Execution Provider", data=df, palette=colors, edgecolor="#0F172A", linewidth=2)
     
     for p in ax.patches:
         if p.get_height() > 0:
-            ax.annotate(f'{p.get_height():.1f}ms', 
+            ax.annotate(f'{p.get_height():.2f}ms',
                         (p.get_x() + p.get_width() / 2., p.get_height()),
-                        ha='center', va='center', xytext=(0, 9), 
-                        textcoords='offset points', fontsize=10, fontweight='bold')
+                        ha='center', va='center', xytext=(0, 12), 
+                        textcoords='offset points', fontsize=10, fontweight='bold', color="#F8FAFC")
 
-    plt.title('Độ trễ YOLOv8 trên M4 Pro (Càng thấp càng tốt)', fontsize=18, fontweight='bold', pad=25)
-    plt.ylabel('Độ trễ xử lý (ms)', fontsize=13)
-    plt.xlabel('Phiên bản Model', fontsize=13)
+    plt.title('YOLOv8 Latency Comparison - M4 Pro', fontsize=20, fontweight='bold', pad=30, color="#F1F5F9")
+    plt.ylabel('Độ trễ xử lý (ms)', fontsize=14, labelpad=15)
+    plt.xlabel('Phiên bản Model', fontsize=14, labelpad=15)
+    plt.grid(axis='y', linestyle='--', alpha=0.3)
+    plt.legend(title="Engine", frameon=True, facecolor="#1E293B", edgecolor="#334155")
     plt.tight_layout()
     
     # Lưu dưới dạng WebP
-    out_latency = 'output/performance_chart.webp'
-    plt.savefig(out_latency, format='webp', dpi=300)
+    out_latency = '../output/performance_chart.webp'
+    plt.savefig(out_latency, format='webp', dpi=300, facecolor="#0F172A")
     print(f"✅ Đã lưu biểu đồ Độ trễ: {out_latency}")
     
     # --- Biểu đồ FPS ---
-    plt.figure(figsize=(14, 8))
-    ax_fps = sns.barplot(x="Model", y="FPS", hue="Execution Provider", data=df, palette=colors)
+    plt.figure(figsize=(14, 8), dpi=120)
+    ax_fps = sns.barplot(x="Model", y="FPS", hue="Execution Provider", data=df, palette=colors, edgecolor="#0F172A", linewidth=2)
     
     for p in ax_fps.patches:
         if p.get_height() > 0:
-            ax_fps.annotate(f'{p.get_height():.1f}', 
+            ax_fps.annotate(f'{p.get_height():.1f}',
                             (p.get_x() + p.get_width() / 2., p.get_height()),
-                            ha='center', va='center', xytext=(0, 9), 
-                            textcoords='offset points', fontsize=10, fontweight='bold')
+                            ha='center', va='center', xytext=(0, 12), 
+                            textcoords='offset points', fontsize=11, fontweight='bold', color="#F8FAFC")
 
-    plt.title('Tốc độ xử lý YOLOv8 trên M4 Pro (Càng cao càng tốt)', fontsize=18, fontweight='bold', pad=25)
-    plt.ylabel('Số khung hình / giây (FPS)', fontsize=13)
-    plt.xlabel('Phiên bản Model', fontsize=13)
+    plt.title('YOLOv8 Throughput (FPS) - M4 Pro', fontsize=20, fontweight='bold', pad=30, color="#F1F5F9")
+    plt.ylabel('Số khung hình / giây (FPS)', fontsize=14, labelpad=15)
+    plt.xlabel('Phiên bản Model', fontsize=14, labelpad=15)
+    plt.grid(axis='y', linestyle='--', alpha=0.3)
+    plt.legend(title="Engine", frameon=True, facecolor="#1E293B", edgecolor="#334155")
     plt.tight_layout()
     
     # Lưu dưới dạng WebP
-    out_fps = 'output/fps_chart.webp'
-    plt.savefig(out_fps, format='webp', dpi=300)
+    out_fps = '../output/fps_chart.webp'
+    plt.savefig(out_fps, format='webp', dpi=300, facecolor="#0F172A")
     print(f"✅ Đã lưu biểu đồ FPS: {out_fps}")
 
 if __name__ == "__main__":

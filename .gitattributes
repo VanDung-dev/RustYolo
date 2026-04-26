@@ -5,5 +5,4 @@ tests/ export-ignore
 *.md export-ignore
 docs/ export-ignore
 scripts/ export-ignore
-benchmark_yolov8_*.py export-ignore
-generate_plots.py export-ignore
+benchmark/ export-ignore
