@@ -1,7 +1,7 @@
 //! Logic decode cho YOLOv8 Pose Estimation (Keypoints)
 
 use crate::v8::detector::YoloV8Detector;
-use crate::yolo::YoloDetection;
+use crate::yolo::{YoloDetection, YoloCommon};
 use ndarray::{Axis, s};
 use pyo3::prelude::*;
 
@@ -29,7 +29,7 @@ impl YoloV8Detector {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Dimensionality error: {}", e))
         })?;
 
-        let mut all_boxes: Vec<_> = Vec::with_capacity(128);
+        let mut all_boxes: Vec<(f32, f32, f32, f32, f32, usize, Vec<(f32, f32, f32)>, Vec<f32>)> = Vec::with_capacity(128);
         for i in 0..num_anchors {
             let row = out_data_2d.row(i);
             let scores = row.slice(s![4..4 + num_classes]);
@@ -70,27 +70,24 @@ impl YoloV8Detector {
             all_boxes.push((x, y, bbw, bbh, max_conf, max_class, keypoints, vec![]));
         }
 
+        // 2. Sắp xếp theo độ tin cậy giảm dần
         all_boxes.sort_unstable_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
-        let mut keep = vec![true; all_boxes.len()];
-        let mut detections = Vec::with_capacity(all_boxes.len());
 
-        for i in 0..all_boxes.len() {
-            if !keep[i] { continue; }
-            let (x, y, w, h, conf, class_id, ref kps, _) = all_boxes[i];
+        // 3. NMS (Non-Maximum Suppression)
+        let nms_boxes: Vec<(f32, f32, f32, f32)> = all_boxes.iter().map(|b| (b.0, b.1, b.2, b.3)).collect();
+        let nms_classes: Vec<usize> = all_boxes.iter().map(|b| b.5).collect();
+        let keep_indices = YoloCommon::perform_nms(&nms_boxes, &nms_classes, iou_threshold);
+
+        let mut detections = Vec::with_capacity(keep_indices.len());
+        for &idx in &keep_indices {
+            let (x, y, w, h, conf, class_id, kps, _) = &all_boxes[idx];
             detections.push(YoloDetection {
-                class_id: class_id as i32,
-                confidence: conf,
-                x, y, width: w, height: h,
+                class_id: *class_id as i32,
+                confidence: *conf,
+                x: *x, y: *y, width: *w, height: *h,
                 keypoints: kps.clone(),
                 mask_coeffs: vec![],
             });
-
-            for j in (i + 1)..all_boxes.len() {
-                if !keep[j] || all_boxes[j].5 != class_id { continue; }
-                if Self::compute_iou_internal(&all_boxes[i], &all_boxes[j]) > iou_threshold {
-                    keep[j] = false;
-                }
-            }
         }
 
         Ok(detections)

@@ -9,7 +9,7 @@
 //! - `obb`: Logic decode cho Oriented Bounding Box.
 //! - `cls`: Logic decode cho Classification.
 
-mod detector;
+pub(crate) mod detector;
 mod base;
 mod pose;
 mod seg;
