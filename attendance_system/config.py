@@ -48,6 +48,9 @@ COLOR_INFO = (255, 255, 255)    # Trắng
 COLOR_RESTING = (150, 150, 150) # Xám
 COLOR_SCANNING = (0, 255, 255)  # Vàng
 
+UI_RECT_THICKNESS = 3           # Độ dày viền khung hình
+UI_ALPHA_SHIELD = 0.75           # Độ trong suốt của shield chống phone (0.0-1.0)
+
 FONT_SIZE_LARGE = 24
 FONT_SIZE_MEDIUM = 22
 FONT_SIZE_SMALL = 20
@@ -69,3 +72,5 @@ REST_MODE_FPS = 15            # FPS mục tiêu trong chế độ nghỉ
 # --- Danh sách Class YOLO ---
 CLASS_PERSON = 0
 CLASS_PHONE = 67
+CLASS_TV = 62
+CLASS_LAPTOP = 63
