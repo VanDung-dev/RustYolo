@@ -164,73 +164,84 @@ class YoloDetector:
             return [], {}
 
     def annotate_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
-        """
-        Vẽ kết quả lên frame bằng PIL để hỗ trợ font JetBrains Mono.
-        """
+        """Vẽ toàn bộ kết quả AI (Box, Seg, Pose, OBB) lên frame."""
         if not results:
             return frame
 
-        h, w = frame.shape[:2]
-
-        # Classification Model (Vẽ panel riêng)
+        # 1. Xử lý Classification riêng (vẽ panel overlay)
         if self.is_cls_model:
             return self._draw_classification_overlay(frame.copy(), results)
 
-        # 1. Vẽ Segmentation Masks (nếu có) bằng OpenCV/NumPy trước
         annotated = frame.copy()
+        h, w = frame.shape[:2]
+
+        # 2. Vẽ Segmentation Masks (nếu có) bằng NumPy/OpenCV (Nhanh nhất)
         if self.is_seg_model and self._proto is not None:
             annotated = self._draw_seg_masks(annotated, results, h, w)
 
-        # 2. Vẽ Bounding Boxes và Labels bằng OpenCV (Native - Cực nhanh)
+        # 3. Vẽ các vật thể (Box, OBB, Label)
         for det in results:
-            conf = det["confidence"]
-            class_id = det["class_id"]
-            x1 = max(0, int(det["x"]))
-            y1 = max(0, int(det["y"]))
-            x2 = min(w - 1, int(det["x"] + det["w"]))
-            y2 = min(h - 1, int(det["y"] + det["h"]))
+            self._draw_detection_object(annotated, det, w, h)
 
-            # Màu sắc
-            box_color = SEG_PALETTE[class_id % len(SEG_PALETTE)] if self.is_seg_model else (0, 255, 0)
-            box_thick = 1 if (self.is_pose_model or self.is_seg_model) else 2
-
-            # Vẽ Bounding Box
-            if not self.is_obb_model:
-                cv2.rectangle(annotated, (x1, y1), (x2, y2), box_color, box_thick)
-
-            # Vẽ OBB (Vẽ trực tiếp trên OpenCV)
-            if self.is_obb_model and len(det.get("keypoints", [])) >= 4:
-                pts = np.array([(int(kp[0]), int(kp[1])) for kp in det["keypoints"][:4]], np.int32)
-                cv2.polylines(annotated, [pts], True, (0, 255, 255), 2, cv2.LINE_AA)
-                label_y = pts[0][1] - 10
-            else:
-                label_y = y1 - 10
-
-            # Label Text
-            if self.is_pose_model:
-                label_text = f"Person {conf:.2f}"
-            elif self.is_obb_model:
-                name = DOTA_CLASSES[class_id] if class_id < len(DOTA_CLASSES) else f"ID:{class_id}"
-                label_text = f"{name} {conf:.2f}"
-            else:
-                name = COCO_CLASSES[class_id] if class_id < len(COCO_CLASSES) else f"ID:{class_id}"
-                label_text = f"{name} {conf:.2f}"
-
-            # Vẽ Label Background + Text bằng OpenCV (Tiết kiệm 5-10ms so với PIL)
-            (text_w, text_h), baseline = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-            cv2.rectangle(annotated, (x1, label_y - text_h - baseline), (x1 + text_w, label_y + baseline), (0, 0, 0), -1)
-            cv2.putText(
-                annotated, label_text, (x1, label_y), cv2.FONT_HERSHEY_SIMPLEX,
-                0.6, (255, 255, 255), 2, cv2.LINE_AA
-            )
-
-        # 4. Vẽ Skeleton (Vẽ lại bằng OpenCV vì logic skeleton phức tạp)
+        # 4. Vẽ Skeleton cho Pose Model
         if self.is_pose_model:
             for det in results:
                 if "keypoints" in det:
                     annotated = self._draw_skeleton(annotated, det, h, w)
 
         return annotated
+
+    def _draw_detection_object(self, canvas: np.ndarray, det: dict, w: int, h: int):
+        """Vẽ một vật thể bao gồm Box/OBB và Label."""
+        conf = det["confidence"]
+        class_id = det["class_id"]
+        
+        # Tọa độ cơ bản
+        x1, y1 = max(0, int(det["x"])), max(0, int(det["y"]))
+        x2, y2 = min(w - 1, int(det["x"] + det["w"])), min(h - 1, int(det["y"] + det["h"]))
+
+        # Màu sắc & Độ dày
+        color = SEG_PALETTE[class_id % len(SEG_PALETTE)] if self.is_seg_model else (0, 255, 0)
+        thick = 1 if (self.is_pose_model or self.is_seg_model) else 2
+
+        # 1. Vẽ Geometry (Rectangle hoặc OBB)
+        label_y = y1 - 10
+        if self.is_obb_model and len(det.get("keypoints", [])) >= 4:
+            pts = np.array([(int(kp[0]), int(kp[1])) for kp in det["keypoints"][:4]], np.int32)
+            cv2.polylines(canvas, [pts], True, (0, 255, 255), 2, cv2.LINE_AA)
+            label_y = pts[0][1] - 10
+        elif not self.is_obb_model:
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, thick)
+
+        # 2. Vẽ Label
+        label_text = self._get_label_text(class_id, conf)
+        self._draw_label(canvas, label_text, x1, label_y)
+
+    def _get_label_text(self, class_id: int, conf: float) -> str:
+        """Tạo chuỗi văn bản cho nhãn vật thể."""
+        if self.is_pose_model:
+            return f"Person {conf:.2f}"
+        
+        if self.is_obb_model:
+            name = DOTA_CLASSES[class_id] if class_id < len(DOTA_CLASSES) else f"ID:{class_id}"
+        else:
+            name = COCO_CLASSES[class_id] if class_id < len(COCO_CLASSES) else f"ID:{class_id}"
+        
+        return f"{name} {conf:.2f}"
+
+    @staticmethod
+    def _draw_label(canvas: np.ndarray, text: str, x: int, y: int):
+        """Vẽ nhãn với nền đen và chữ trắng bằng OpenCV (Native - Nhanh)."""
+        (text_w, text_h), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        
+        # Vẽ nền đen
+        cv2.rectangle(canvas, (x, y - text_h - baseline), (x + text_w, y + baseline), (0, 0, 0), -1)
+        
+        # Vẽ chữ trắng
+        cv2.putText(
+            canvas, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX,
+            0.6, (255, 255, 255), 2, cv2.LINE_AA
+        )
 
     def _draw_seg_masks(
         self, annotated: np.ndarray, results: list, h: int, w: int,
@@ -291,45 +302,61 @@ class YoloDetector:
 
         return np.clip(overlay, 0, 255).astype(np.uint8)
 
-    @staticmethod
-    def _draw_skeleton(
-        annotated: np.ndarray, det: dict, h: int, w: int
-    ) -> np.ndarray:
-        """Vẽ skeleton pose chuẩn COCO với màu theo nhóm cơ thể."""
+    def _draw_skeleton(self, annotated: np.ndarray, det: dict, h: int, w: int) -> np.ndarray:
+        """Vẽ skeleton pose chuẩn COCO."""
         raw_kp = det.get("keypoints", [])
         if not raw_kp or len(raw_kp) < 51:
             return annotated
 
-        kp = [(raw_kp[i], raw_kp[i + 1], raw_kp[i + 2]) for i in range(0, 51, 3)]
+        # 1. Parse keypoints
+        kp = self._parse_keypoints(raw_kp)
 
-        # Vẽ limb (đường nối), màu lấy từ config.SKELETON_EDGES
-        for (a, b, color) in SKELETON_EDGES:
-            if a >= len(kp) or b >= len(kp):
-                continue
-            xa, ya, ca = kp[a]
-            xb, yb, cb = kp[b]
-            if ca < POSE_KP_CONF or cb < POSE_KP_CONF:
-                continue
-            px1, py1 = int(xa), int(ya)
-            px2, py2 = int(xb), int(yb)
-            if not (0 <= px1 < w and 0 <= py1 < h):
-                continue
-            if not (0 <= px2 < w and 0 <= py2 < h):
-                continue
-            cv2.line(annotated, (px1, py1), (px2, py2), color, 2, cv2.LINE_AA)
+        # 2. Vẽ Limbs (Đường nối)
+        self._draw_pose_limbs(annotated, kp, w, h)
 
-        # Vẽ keypoint (viền trắng 5px + fill màu 3px), màu từ config.KP_COLORS
-        for i, (kx, ky, kc) in enumerate(kp):
-            if kc < POSE_KP_CONF:
-                continue
-            if not (0 <= kx < w and 0 <= ky < h):
-                continue
-            pt = (int(kx), int(ky))
-            color = KP_COLORS[i] if i < len(KP_COLORS) else (0, 255, 0)
-            cv2.circle(annotated, pt, 5, (255, 255, 255), -1, cv2.LINE_AA)
-            cv2.circle(annotated, pt, 3, color,           -1, cv2.LINE_AA)
+        # 3. Vẽ Keypoints (Các khớp)
+        self._draw_pose_keypoints(annotated, kp, w, h)
 
         return annotated
+
+    @staticmethod
+    def _parse_keypoints(raw_kp: list) -> list:
+        """Chuyển đổi list keypoints thô thành list các tuple (x, y, conf)."""
+        return [(raw_kp[i], raw_kp[i + 1], raw_kp[i + 2]) for i in range(0, 51, 3)]
+
+    @staticmethod
+    def _draw_pose_limbs(canvas: np.ndarray, kp: list, w: int, h: int):
+        """Vẽ các đường nối giữa các khớp dựa trên cấu trúc COCO."""
+        for (a, b, color) in SKELETON_EDGES:
+            if a >= len(kp) or b >= len(kp): continue
+            
+            xa, ya, ca = kp[a]
+            xb, yb, cb = kp[b]
+            
+            if ca < POSE_KP_CONF or cb < POSE_KP_CONF: continue
+            
+            p1, p2 = (int(xa), int(ya)), (int(xb), int(yb))
+            
+            # Kiểm tra tọa độ hợp lệ
+            if (0 <= p1[0] < w and 0 <= p1[1] < h and 
+                0 <= p2[0] < w and 0 <= p2[1] < h):
+                cv2.line(canvas, p1, p2, color, 2, cv2.LINE_AA)
+
+    @staticmethod
+    def _draw_pose_keypoints(canvas: np.ndarray, kp: list, w: int, h: int):
+        """Vẽ các điểm khớp với viền trắng và tâm màu."""
+        for i, (kx, ky, kc) in enumerate(kp):
+            if kc < POSE_KP_CONF: continue
+            
+            pt = (int(kx), int(ky))
+            if not (0 <= pt[0] < w and 0 <= pt[1] < h): continue
+            
+            color = KP_COLORS[i] if i < len(KP_COLORS) else (0, 255, 0)
+            
+            # Vẽ viền trắng ngoài cùng để nổi bật
+            cv2.circle(canvas, pt, 5, (255, 255, 255), -1, cv2.LINE_AA)
+            # Vẽ tâm màu theo cấu trúc cơ thể
+            cv2.circle(canvas, pt, 3, color, -1, cv2.LINE_AA)
 
     @staticmethod
     def _draw_classification_overlay(annotated: np.ndarray, results: list) -> np.ndarray:
