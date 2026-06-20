@@ -147,13 +147,7 @@ def _get_camera_source(camera_id):
 
 def _handle_frame_processing(frame, monitor, frame_queue, result_queue):
     """Xử lý tiền xử lý frame, AI inference và lấy kết quả."""
-    # Resize nếu cần
-    if not hasattr(run_camera_detection, "_needs_resize"):
-        curr_h, curr_w = frame.shape[:2]
-        run_camera_detection._needs_resize = (curr_h != CAMERA_HEIGHT or curr_w != CAMERA_WIDTH)
-        
-    if run_camera_detection._needs_resize:
-        frame = cv2.resize(frame, (CAMERA_WIDTH, CAMERA_HEIGHT), interpolation=cv2.INTER_LINEAR)
+    # VideoStream đã cấu hình đúng CAMERA_WIDTH x CAMERA_HEIGHT, không cần resize
 
     # Gửi sang luồng AI
     if frame_queue.empty():

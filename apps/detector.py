@@ -109,7 +109,7 @@ class YoloDetector:
         """Trả về Execution Provider thực tế đang được sử dụng (CoreML, WebGPU, CPU)"""
         return self.detector.ep
 
-    def detect_frame(self, frame: np.ndarray) -> tuple:
+    def detect_frame(self, frame: np.ndarray, benchmark_mode: bool = False) -> tuple:
         """
         Chạy detection AI và trả về (results, timing).
 
@@ -119,15 +119,17 @@ class YoloDetector:
         3. Kết quả → Arrow capsule → Python (không copy kết quả)
         4. [Seg] Proto tensor → Arrow capsule → Python (không copy proto)
 
+        Args:
+            frame: Ảnh đầu vào (HWC uint8).
+            benchmark_mode: Nếu True, bỏ qua to_pylist() để tránh O(N) copy
+                           khi chỉ cần đo latency.
+
         Returns:
             (results: list[dict], timing: dict)
         """
         try:
-            # TỐI ƯU: Sử dụng detect_to_arrow thay vì detect_and_draw.
-            # Vì frame trong luồng AI worker (background) là frame cũ, việc vẽ trong Rust ở đây là lãng phí.
-            # Việc vẽ sẽ được thực hiện ở annotate_frame (main thread) trên frame mới nhất.
             res = self.detector.detect_to_arrow(frame)
-            if len(res) == 2: # YOLOv26 returns only 2 caps (no mask proto)
+            if len(res) == 2:
                 arr_cap, sch_cap = res
                 proto_arr_cap, proto_sch_cap = None, None
             else:
@@ -141,20 +143,13 @@ class YoloDetector:
                 "nms_ms": self.detector.nms_ms,
             }
 
-            # Proto tensor cho seg model (zero-copy qua Arrow)
-            if (
-                self.is_seg_model
-                and proto_arr_cap is not None
-                and proto_sch_cap is not None
-            ):
-                proto_arrow = pa.Array._import_from_c_capsule(
-                    proto_sch_cap, proto_arr_cap
-                )
+            if self.is_seg_model and proto_arr_cap is not None and proto_sch_cap is not None:
+                proto_arrow = pa.Array._import_from_c_capsule(proto_sch_cap, proto_arr_cap)
                 self._proto = np.array(proto_arrow, dtype=np.float32)
             else:
                 self._proto = None
 
-            if len(results_arrow) == 0:
+            if len(results_arrow) == 0 or benchmark_mode:
                 return [], timing
 
             return results_arrow.to_pylist(), timing
@@ -164,26 +159,26 @@ class YoloDetector:
             return [], {}
 
     def annotate_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
-        """Vẽ toàn bộ kết quả AI (Box, Seg, Pose, OBB) lên frame."""
+        """Vẽ toàn bộ kết quả AI (Box, Seg, Pose, OBB) lên frame.
+        
+        Vẽ trực tiếp lên frame (không copy) vì caller không tái sử dụng frame gốc.
+        Các hàm vẽ phức tạp (seg mask, classification overlay) tự quản lý copy riêng.
+        """
         if not results:
             return frame
 
-        # 1. Xử lý Classification riêng (vẽ panel overlay)
         if self.is_cls_model:
-            return self._draw_classification_overlay(frame.copy(), results)
+            return self._draw_classification_overlay(frame, results)
 
-        annotated = frame.copy()
+        annotated = frame
         h, w = frame.shape[:2]
 
-        # 2. Vẽ Segmentation Masks (nếu có) bằng NumPy/OpenCV (Nhanh nhất)
         if self.is_seg_model and self._proto is not None:
             annotated = self._draw_seg_masks(annotated, results, h, w)
 
-        # 3. Vẽ các vật thể (Box, OBB, Label)
         for det in results:
             self._draw_detection_object(annotated, det, w, h)
 
-        # 4. Vẽ Skeleton cho Pose Model
         if self.is_pose_model:
             for det in results:
                 if "keypoints" in det:
