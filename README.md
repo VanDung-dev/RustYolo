@@ -14,7 +14,7 @@ Tối ưu mô hình YOLO hiệu suất cao và hệ thống điểm danh Face ID
 | Data Transfer | Apache Arrow C Data Interface **Zero Copy**                     |
 | Đa luồng | Rayon data parallelism (NMS & Preprocess)                       |
 | Thermal Control | Adaptive Thermal Scheduling (Tự động điều tiết FPS)             |
-| Latency yolov8n | ~9.07ms (CoreML), ~10.31ms (WebGPU), ~21.71ms (CPU) trên M4 Pro |
+| Latency yolov8n | ~8.84ms (CoreML), ~10.05ms (WebGPU), ~21.48ms (CPU) trên M4 Pro |
 
 ---
 
@@ -24,6 +24,7 @@ Tối ưu mô hình YOLO hiệu suất cao và hệ thống điểm danh Face ID
 RustYolo/
 ├── src/                    # Core Engine (Rust Native)
 ├── apps/                   # Application Layer (Python)
+├── benchmark/              # Benchmark Tool (Multi-engine)
 ├── attendance_system/      # Face ID Solution
 ├── main.py                 # Entry point YOLO Detection
 ├── Cargo.toml              # Rust configuration
@@ -232,38 +233,38 @@ python main.py --model yolov8n.onnx
 
 | Model | TOTAL LATENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
 |---|---------------|------------|---|---|
-| yolov8n | ~9.07 ms      | ~110.2 fps | 60 fps | Cực kỳ mượt |
-| yolov8s | ~14.08 ms     | ~71.0 fps  | 60 fps | Cực kỳ mượt |
-| yolov8m | ~20.55 ms     | ~48.7 fps  | 60 fps | Rất mượt |
-| yolov8l | ~29.13 ms     | ~34.3 fps  | 60 fps | Mượt |
-| yolov8x | ~38.71 ms     | ~25.8 fps  | 60 fps | Mượt |
+| yolov8n | ~8.84 ms      | ~113.1 fps | 60 fps | Cực kỳ mượt |
+| yolov8s | ~13.37 ms     | ~74.8 fps  | 60 fps | Cực kỳ mượt |
+| yolov8m | ~20.21 ms     | ~49.5 fps  | 60 fps | Rất mượt |
+| yolov8l | ~28.93 ms     | ~34.6 fps  | 60 fps | Mượt |
+| yolov8x | ~38.51 ms     | ~26.0 fps  | 60 fps | Mượt |
 
 ### 2. WebGPU (Đa nền tảng / GPU chung)
 
 | Model | TOTAL LATENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
 |---|---------------|------------|---|---|
-| yolov8n | ~10.31 ms     | ~97.0 fps  | 60 fps | Cực kỳ mượt |
-| yolov8s | ~20.89 ms     | ~47.9 fps  | 60 fps | Rất mượt |
-| yolov8m | ~46.56 ms     | ~21.5 fps  | 60 fps | Ổn định |
-| yolov8l | ~84.85 ms     | ~11.8 fps  | 60 fps | Thấp |
-| yolov8x | ~128.60 ms    | ~7.8 fps   | 60 fps | Rất chậm |
+| yolov8n | ~10.05 ms     | ~99.5 fps  | 60 fps | Cực kỳ mượt |
+| yolov8s | ~20.56 ms     | ~48.6 fps  | 60 fps | Rất mượt |
+| yolov8m | ~46.21 ms     | ~21.6 fps  | 60 fps | Ổn định |
+| yolov8l | ~84.29 ms     | ~11.9 fps  | 60 fps | Thấp |
+| yolov8x | ~127.88 ms    | ~7.8 fps   | 60 fps | Rất chậm |
 
 ### 3. CPU thuần (Không tăng tốc GPU)
 
 | Model | TOTAL LATENCY | ENGINE FPS | CAMERA FPS | Trải nghiệm |
 |---|---------------|------------|---|---|
-| yolov8n | ~21.71 ms     | ~46.1 fps  | 60 fps | Mượt |
-| yolov8s | ~33.58 ms     | ~29.8 fps  | 60 fps | Thấp |
-| yolov8m | ~66.27 ms     | ~15.1 fps  | 60 fps | Rất chậm |
-| yolov8l | ~124.78 ms    | ~8.0 fps   | 60 fps | Lag |
-| yolov8x | ~173.84 ms    | ~5.8 fps   | 60 fps | Rất lag |
+| yolov8n | ~21.48 ms     | ~46.5 fps  | 60 fps | Mượt |
+| yolov8s | ~33.32 ms     | ~30.0 fps  | 60 fps | Thấp |
+| yolov8m | ~65.63 ms     | ~15.2 fps  | 60 fps | Rất chậm |
+| yolov8l | ~124.95 ms    | ~8.0 fps   | 60 fps | Lag |
+| yolov8x | ~173.40 ms    | ~5.8 fps   | 60 fps | Rất lag |
 
 > **Tổng kết**: 
 > * **CoreML** là lựa chọn số 1 trên macOS, mang lại tốc độ và hiệu suất năng lượng tốt nhất.
 > * **WebGPU** là giải pháp cân bằng, hiệu năng cực tốt cho các model nhẹ và có khả năng tương thích cao.
 > * **CPU** chỉ nên dùng cho mục đích kiểm thử hoặc trên các hệ thống không có GPU hỗ trợ.
 
-### 📊 Biểu đồ so sánh hiệu năng (Python High-Quality)
+### 📊 Biểu đồ so sánh hiệu năng
 
 <p align="center">
   <img src="output/performance_chart.webp" width="600" alt="Performance Comparison Chart - Biểu đồ so sánh độ trễ infererence giữa các model YOLOv8 với CoreML, WebGPU và CPU"/>
@@ -276,6 +277,26 @@ python main.py --model yolov8n.onnx
   <br/>
   <em>Hình 2: Biểu đồ so sánh Engine FPS giữa các model YOLOv8 (n/s/m/l/x) với CoreML, WebGPU và CPU</em>
 </p>
+
+### 🔬 Chạy Benchmark
+
+Công cụ benchmark tự động đo lường latency qua cả 3 engine (CPU, CoreML, WebGPU) với 100 ảnh COCO thực tế:
+
+```bash
+# Chạy benchmark đầy đủ
+python benchmark/run_benchmark.py
+
+# Benchmark vòng lặp liên tục (phát hiện thermal throttle)
+python benchmark/run_benchmark.py --loop
+
+# Custom models
+python benchmark/run_benchmark.py --models yolov8n.onnx yolov8s.onnx
+
+# Vẽ biểu đồ sau khi benchmark
+python benchmark/generate_plots.py
+```
+
+> Benchmark sử dụng `benchmark_mode=True` để bỏ qua `to_pylist()` (O(N) copy Python), đo chính xác thời gian inference Rust thuần.
 
 ---
 
