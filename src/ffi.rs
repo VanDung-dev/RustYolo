@@ -85,12 +85,12 @@ pub fn export_detections_to_arrow<'py>(
     num_keypoints: usize,
     num_mask_coeffs: usize,
 ) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>)> {
-    let class_ids = Int32Array::from(detections.iter().map(|d| d.class_id).collect::<Vec<_>>());
-    let confidences = Float32Array::from(detections.iter().map(|d| d.confidence).collect::<Vec<_>>());
-    let boxes_x = Float32Array::from(detections.iter().map(|d| d.x).collect::<Vec<_>>());
-    let boxes_y = Float32Array::from(detections.iter().map(|d| d.y).collect::<Vec<_>>());
-    let boxes_w = Float32Array::from(detections.iter().map(|d| d.width).collect::<Vec<_>>());
-    let boxes_h = Float32Array::from(detections.iter().map(|d| d.height).collect::<Vec<_>>());
+    let class_ids = Int32Array::from_iter_values(detections.iter().map(|d| d.class_id));
+    let confidences = Float32Array::from_iter_values(detections.iter().map(|d| d.confidence));
+    let boxes_x = Float32Array::from_iter_values(detections.iter().map(|d| d.x));
+    let boxes_y = Float32Array::from_iter_values(detections.iter().map(|d| d.y));
+    let boxes_w = Float32Array::from_iter_values(detections.iter().map(|d| d.width));
+    let boxes_h = Float32Array::from_iter_values(detections.iter().map(|d| d.height));
 
     let mut fields = vec![
         Field::new("class_id", DataType::Int32, false),
@@ -116,7 +116,9 @@ pub fn export_detections_to_arrow<'py>(
             DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
             true,
         ));
-        let mut builder = ListBuilder::new(Float32Builder::new());
+        let mut builder = ListBuilder::new(Float32Builder::with_capacity(
+            detections.len() * num_keypoints * 3,
+        ));
         for det in detections {
             for &(x, y, conf) in &det.keypoints {
                 builder.values().append_value(x);
@@ -134,7 +136,9 @@ pub fn export_detections_to_arrow<'py>(
             DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
             true,
         ));
-        let mut builder = ListBuilder::new(Float32Builder::new());
+        let mut builder = ListBuilder::new(Float32Builder::with_capacity(
+            detections.len() * num_mask_coeffs,
+        ));
         for det in detections {
             for &val in &det.mask_coeffs {
                 builder.values().append_value(val);

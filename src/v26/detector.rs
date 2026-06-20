@@ -171,7 +171,11 @@ impl YoloV26Detector {
     }
 
     pub(crate) fn run_inference_internal(&mut self, py: Python, _orig_dim: (usize, usize)) -> PyResult<YoloResultsV26> {
-        let input_tensor = Value::from_array(self.common.input_tensor_buffer.clone())
+        let input_buffer = std::mem::replace(
+            &mut self.common.input_tensor_buffer,
+            Array4::zeros((1, 3, self.common.input_height, self.common.input_width)),
+        );
+        let input_tensor = Value::from_array(input_buffer)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         
         let t_infer = Instant::now();

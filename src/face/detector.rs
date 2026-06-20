@@ -250,7 +250,11 @@ impl ScrfdDetector {
     }
 
     /// Chạy tiến trình phát hiện trên một ảnh
-    pub fn detect(&mut self, img: &DynamicImage) -> Result<Vec<DetectedFace>, FaceError> {
+    pub fn detect(
+        &mut self,
+        img: &DynamicImage,
+        score_threshold: Option<f32>,
+    ) -> Result<Vec<DetectedFace>, FaceError> {
         let (processed_img, params) = self.preprocess(img);
         let input_tensor = self.create_input_tensor(&processed_img)?;
         let input_value = Value::from_array(input_tensor)?;
@@ -263,6 +267,7 @@ impl ScrfdDetector {
             &self.output_maps,
             &self.anchors,
             &self.config,
+            score_threshold,
         )
     }
 
@@ -350,7 +355,9 @@ impl ScrfdDetector {
         output_maps: &[OutputMap],
         anchors_list: &[Array2<f32>],
         config: &DetectorConfig,
+        score_threshold_override: Option<f32>,
     ) -> Result<Vec<DetectedFace>, FaceError> {
+        let effective_threshold = score_threshold_override.unwrap_or(config.score_threshold);
         let mut candidate_faces = Vec::new();
 
         for (idx, map) in output_maps.iter().enumerate() {
@@ -367,7 +374,7 @@ impl ScrfdDetector {
 
             for i in 0..scores.nrows() {
                 let score = scores[[i, 0]];
-                if score < config.score_threshold {
+                if score < effective_threshold {
                     continue;
                 }
 

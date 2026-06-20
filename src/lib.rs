@@ -30,6 +30,15 @@ pub use yolo::YoloDetection;
 fn rust_yolo(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     pyo3_log::init();
 
+    // Cấu hình Rayon global thread pool: tối ưu cho mixed CPU/GPU workloads
+    // Dùng available_parallelism, tránh oversubscription khi GPU đang chạy inference
+    if let Ok(n) = std::thread::available_parallelism() {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n.get().max(2))
+            .build_global()
+            .ok();
+    }
+
     m.add_class::<PerformanceMonitor>()?;
     m.add_class::<YoloV8Detector>()?;
     m.add_class::<YoloV26Detector>()?;
