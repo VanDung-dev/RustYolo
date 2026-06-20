@@ -19,6 +19,7 @@ class VideoStream:
         self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         
         self.frame_queue = queue.Queue(maxsize=2)
+        self.last_frame = None  # Frame gần nhất, dùng fallback khi timeout
         self.stopped = False
 
     def start(self):
@@ -34,6 +35,7 @@ class VideoStream:
                 self.stopped = True
                 break
             
+            self.last_frame = frame
             # Xóa frame cũ nếu queue đầy để luôn có ảnh mới nhất
             if self.frame_queue.full():
                 try:
@@ -43,10 +45,13 @@ class VideoStream:
             self.frame_queue.put(frame)
 
     def read(self, timeout=0.1):
-        """Trả về (True, frame) nếu lấy được ảnh, ngược lại (False, None)."""
+        """Trả về (True, frame) — dùng last_frame làm fallback nếu timeout."""
         try:
-            return True, self.frame_queue.get(timeout=timeout)
+            frame = self.frame_queue.get(timeout=timeout)
+            return True, frame
         except queue.Empty:
+            if self.last_frame is not None:
+                return True, self.last_frame
             return False, None
 
     def stop(self):

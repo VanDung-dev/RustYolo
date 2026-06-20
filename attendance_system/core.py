@@ -79,10 +79,11 @@ class AttendanceCore:
         conn.close()
         logger.info(f"  [DB] Đã tải {len(self.known_users)} người dùng vào bộ nhớ.")
 
-    def process_frame(self, frame, threshold=0.6):
+    def process_frame(self, frame, threshold=0.6, max_faces=50):
         """
         Xử lý frame: Phát hiện khuôn mặt -> Trích xuất Embedding -> So khớp danh tính.
         Sử dụng cơ chế Zero-Copy qua Apache Arrow để đạt hiệu năng tối đa.
+        max_faces: giới hạn số khuôn mặt xử lý mỗi frame (tránh treo khi đám đông)
         """
         # Chuyển BGR sang RGB (không copy bộ nhớ nếu có thể)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -95,15 +96,16 @@ class AttendanceCore:
             if len(detections_arr) == 0:
                 return []
             
-            # Lấy tọa độ các điểm mốc (landmarks) để thực hiện căn chỉnh mặt
-            all_landmarks = detections_arr.field("landmarks").to_pylist()
+            num_faces = min(len(detections_arr), max_faces)
+            
+            # Lấy landmarks - dùng to_pylist (ListArray không support to_numpy trực tiếp)
+            all_landmarks = detections_arr.field("landmarks").to_pylist()[:num_faces]
             
             # 2. Thu thập embeddings xử lý hàng loạt (Batch Inference trong Rust)
             e_arr_cap, e_sch_cap = self.face_tools.get_embeddings_batch_to_arrow(rgb_frame, all_landmarks)
             emb_flat = pa.Array._import_from_c_capsule(e_sch_cap, e_arr_cap).to_numpy()
             
             # Reshape mảng embeddings phẳng thành (Số mặt, 512 chiều)
-            num_faces = len(detections_arr)
             embeddings = emb_flat.reshape(num_faces, 512)
             
             results = []
@@ -121,7 +123,11 @@ class AttendanceCore:
                 best_scores = [-1.0] * num_faces
 
             # Gom kết quả cuối cùng cho từng khuôn mặt
-            # Gom kết quả cuối cùng cho từng khuôn mặt (Tối ưu hóa tránh if-else lồng nhau)
+            det_x1 = detections_arr.field("x1").to_numpy(zero_copy_only=False)[:num_faces]
+            det_y1 = detections_arr.field("y1").to_numpy(zero_copy_only=False)[:num_faces]
+            det_x2 = detections_arr.field("x2").to_numpy(zero_copy_only=False)[:num_faces]
+            det_y2 = detections_arr.field("y2").to_numpy(zero_copy_only=False)[:num_faces]
+            
             for i in range(num_faces):
                 score = float(best_scores[i])
                 is_known = score > 0.45
@@ -129,9 +135,8 @@ class AttendanceCore:
                 # Ánh xạ thông tin user (Default là Unknown nếu không khớp)
                 user = self.known_users[int(best_indices[i])] if is_known else {"name": "Unknown", "id": None}
                 
-                det = detections_arr[i]
                 results.append({
-                    "bbox": [det['x1'].as_py(), det['y1'].as_py(), det['x2'].as_py(), det['y2'].as_py()],
+                    "bbox": [float(det_x1[i]), float(det_y1[i]), float(det_x2[i]), float(det_y2[i])],
                     "identity": user['name'],
                     "confidence": score,
                     "user_id": user['id']
