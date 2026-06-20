@@ -74,10 +74,10 @@ def _check_safety(person_detector, frame):
 
 def _detect_registration_face(core, frame_sq, bx1, by1, bx2, by2):
     """Phát hiện khuôn mặt và kiểm tra xem có nằm trong Guide Box không."""
-    rgb_sq = cv2.cvtColor(frame_sq, cv2.COLOR_BGR2RGB)
     target_face, face_in_box = None, False
     try:
-        arr_cap, sch_cap = core.face_tools.detect_faces_to_arrow(rgb_sq, config.FACE_DET_THRESHOLD)
+        # Rust tự swap BGR→RGB trong normalize tensor, không cần cvtColor
+        arr_cap, sch_cap = core.face_tools.detect_faces_to_arrow(frame_sq, config.FACE_DET_THRESHOLD)
         detections = pa.Array._import_from_c_capsule(sch_cap, arr_cap)
         if len(detections) > 0:
             # Chọn khuôn mặt lớn nhất
@@ -91,7 +91,7 @@ def _detect_registration_face(core, frame_sq, bx1, by1, bx2, by2):
             face_in_box = (fx1 > bx1-margin and fy1 > by1-margin and fx2 < bx2+margin and fy2 < by2+margin)
     except Exception as e:
         logger.error(f"Lỗi nhận diện khuôn mặt: {e}")
-    return target_face, face_in_box, rgb_sq
+    return target_face, face_in_box, frame_sq
 
 def _draw_registration_ui(
     frame_sq, step_info, current_step, total_steps, bx1, by1, bx2, by2, phone_detected, target_face, face_in_box

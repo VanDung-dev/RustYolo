@@ -5,7 +5,6 @@ Module cốt lõi quản lý nhận diện khuôn mặt và cơ sở dữ liệu
 import pyarrow as pa
 import numpy as np
 import rust_yolo
-import cv2
 import os
 import sqlite3
 import logging
@@ -84,13 +83,11 @@ class AttendanceCore:
         Xử lý frame: Phát hiện khuôn mặt -> Trích xuất Embedding -> So khớp danh tính.
         Sử dụng cơ chế Zero-Copy qua Apache Arrow để đạt hiệu năng tối đa.
         max_faces: giới hạn số khuôn mặt xử lý mỗi frame (tránh treo khi đám đông)
+        Không cần cv2.cvtColor — Rust tự swap BGR→RGB trong normalize tensor.
         """
-        # Chuyển BGR sang RGB (không copy bộ nhớ nếu có thể)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
         # 1. Phát hiện tất cả khuôn mặt (Gửi ảnh xuống Rust, nhận về Arrow Capsule)
         try:
-            arr_cap, sch_cap = self.face_tools.detect_faces_to_arrow(rgb_frame, threshold)
+            arr_cap, sch_cap = self.face_tools.detect_faces_to_arrow(frame, threshold)
             detections_arr = pa.Array._import_from_c_capsule(sch_cap, arr_cap)
             
             if len(detections_arr) == 0:
@@ -102,7 +99,7 @@ class AttendanceCore:
             all_landmarks = detections_arr.field("landmarks").to_pylist()[:num_faces]
             
             # 2. Thu thập embeddings xử lý hàng loạt (Batch Inference trong Rust)
-            e_arr_cap, e_sch_cap = self.face_tools.get_embeddings_batch_to_arrow(rgb_frame, all_landmarks)
+            e_arr_cap, e_sch_cap = self.face_tools.get_embeddings_batch_to_arrow(frame, all_landmarks)
             emb_flat = pa.Array._import_from_c_capsule(e_sch_cap, e_arr_cap).to_numpy()
             
             # Reshape mảng embeddings phẳng thành (Số mặt, 512 chiều)
