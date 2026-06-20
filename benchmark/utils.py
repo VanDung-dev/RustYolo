@@ -63,7 +63,7 @@ def prepare_benchmark_images(target_num=100, img_size=None):
             
     if not images:
         print("⚠️ Không tải được ảnh COCO, sử dụng ảnh ngẫu nhiên giả lập.")
-        images = [np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)]
+        images = [np.random.randint(0, 255, (720, 1280, 3), dtype=np.uint8)]
         
     return images
 
@@ -77,6 +77,10 @@ class TeeLogger:
         self.terminal.write(message)
         self.log_file.write(message)
         self.log_file.flush()
+
+    def close(self):
+        """Đóng file log, giải phóng tài nguyên."""
+        self.log_file.close()
 
     def flush(self):
         self.terminal.flush()

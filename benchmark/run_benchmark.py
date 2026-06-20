@@ -45,16 +45,16 @@ def _benchmark_model(model_name, ep, iterations, benchmark_images):
         detector = YoloDetector(model_path, confidence=0.25, ep=ep)
         
         # Warmup
-        warmup_count = 5 if ep == "cpu" else 10
+        warmup_count = 10 if ep == "cpu" else 15
         print(f"Đang warmup {warmup_count} lần...")
         for i in range(warmup_count):
-            detector.detect_frame(benchmark_images[i % num_images])
+            detector.detect_frame(benchmark_images[i % num_images], benchmark_mode=True)
         
         # Benchmarking
         print(f"Đang đo lường {iterations} lượt chạy...")
         start_bench = time.perf_counter()
         for i in range(iterations):
-            detector.detect_frame(benchmark_images[i % num_images])
+            detector.detect_frame(benchmark_images[i % num_images], benchmark_mode=True)
         end_bench = time.perf_counter()
         
         avg_time = (end_bench - start_bench) / iterations * 1000
@@ -66,18 +66,22 @@ def _benchmark_model(model_name, ep, iterations, benchmark_images):
 def _run_engine_cycle(ep, title, args, benchmark_images, output_dir):
     """Chạy toàn bộ danh sách model cho một engine cụ thể."""
     log_path = os.path.join(output_dir, f"log_{ep}.txt")
-    sys.stdout = TeeLogger(log_path)
+    logger = TeeLogger(log_path)
+    old_stdout = sys.stdout
+    sys.stdout = logger
     
-    print(f"\n🚀 ĐANG CHẠY BENCHMARK TRÊN: {title}")
-    print(f"Log: {log_path}")
-    print("-" * 60)
-    
-    for model_name in args.models:
-        _benchmark_model(model_name, ep, args.iter, benchmark_images)
-        print("-" * 30)
-    
-    sys.stdout.flush()
-    sys.stdout = sys.stdout.terminal
+    try:
+        print(f"\n🚀 ĐANG CHẠY BENCHMARK TRÊN: {title}")
+        print(f"Log: {log_path}")
+        print("-" * 60)
+        
+        for model_name in args.models:
+            _benchmark_model(model_name, ep, args.iter, benchmark_images)
+            print("-" * 30)
+    finally:
+        sys.stdout.flush()
+        sys.stdout = old_stdout
+        logger.close()
 
 def run_benchmark():
     """Hàm chính điều phối toàn bộ quy trình benchmark."""

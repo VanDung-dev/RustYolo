@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.normpath(os.path.join(CURRENT_DIR, ".."))
+
 def _extract_model_name(line):
     """Trích xuất tên model chuẩn hóa từ một dòng log."""
     model_map = {
@@ -65,10 +68,11 @@ def parse_log(log_path):
 
 def _load_benchmark_data():
     """Đọc dữ liệu từ các file log và trả về DataFrame."""
+    output_dir = os.path.join(PROJECT_ROOT, "output")
     providers = {
-        'CoreML': '../output/log_coreml.txt',
-        'WebGPU': '../output/log_webgpu.txt',
-        'CPU': '../output/log_cpu.txt'
+        'CoreML': os.path.join(output_dir, 'log_coreml.txt'),
+        'WebGPU': os.path.join(output_dir, 'log_webgpu.txt'),
+        'CPU': os.path.join(output_dir, 'log_cpu.txt')
     }
     
     all_results = []
@@ -115,7 +119,7 @@ def _create_latency_chart(df, colors):
     plt.legend(title="Engine", frameon=True, facecolor="#1E293B", edgecolor="#334155")
     plt.tight_layout()
     
-    out_path = '../output/performance_chart.webp'
+    out_path = os.path.join(PROJECT_ROOT, "output", "performance_chart.webp")
     plt.savefig(out_path, format='webp', dpi=300, facecolor="#0F172A")
     print(f"✅ Đã lưu biểu đồ Độ trễ: {out_path}")
 
@@ -137,7 +141,7 @@ def _create_fps_chart(df, colors):
     plt.legend(title="Engine", frameon=True, facecolor="#1E293B", edgecolor="#334155")
     plt.tight_layout()
     
-    out_path = '../output/fps_chart.webp'
+    out_path = os.path.join(PROJECT_ROOT, "output", "fps_chart.webp")
     plt.savefig(out_path, format='webp', dpi=300, facecolor="#0F172A")
     print(f"✅ Đã lưu biểu đồ FPS: {out_path}")
 
