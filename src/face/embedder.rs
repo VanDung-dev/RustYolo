@@ -99,10 +99,11 @@ impl ArcFaceEmbedder {
             let batch_offset = batch_idx * 3 * channel_stride;
 
             // Model ArcFace (insightface) yêu cầu normalization: (x - 127.5) / 127.5
+            // Input là BGR (từ OpenCV), swap R↔B khi normalize
             for (i, chunk) in raw.chunks_exact(3).enumerate() {
-                data[batch_offset + i] = (f32::from(chunk[0]) - 127.5) / 127.5;
+                data[batch_offset + i] = (f32::from(chunk[2]) - 127.5) / 127.5;
                 data[batch_offset + i + channel_stride] = (f32::from(chunk[1]) - 127.5) / 127.5;
-                data[batch_offset + i + 2 * channel_stride] = (f32::from(chunk[2]) - 127.5) / 127.5;
+                data[batch_offset + i + 2 * channel_stride] = (f32::from(chunk[0]) - 127.5) / 127.5;
             }
         }
 

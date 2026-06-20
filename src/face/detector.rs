@@ -338,11 +338,12 @@ impl ScrfdDetector {
         })?;
 
         // SCRFD của InsightFace yêu cầu chuẩn hóa: (x - 127.5) / 128.0
+        // Input là BGR (từ OpenCV), swap R↔B khi normalize
         let channel_stride = h * w;
         for (i, chunk) in raw.chunks_exact(3).enumerate() {
-            data[i] = (f32::from(chunk[0]) - 127.5) / 128.0;
+            data[i] = (f32::from(chunk[2]) - 127.5) / 128.0;
             data[i + channel_stride] = (f32::from(chunk[1]) - 127.5) / 128.0;
-            data[i + 2 * channel_stride] = (f32::from(chunk[2]) - 127.5) / 128.0;
+            data[i + 2 * channel_stride] = (f32::from(chunk[0]) - 127.5) / 128.0;
         }
 
         Ok(array)
